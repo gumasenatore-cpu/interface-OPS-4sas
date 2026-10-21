@@ -9,8 +9,10 @@ import streamlit as st
 import json
 import datetime
 from gerador_pdf import criar_pdf_apr 
+from auth import require_user, render_user_menu
 
-st.set_page_config(page_title="APR 4SAS - Gestão de Riscos", layout="wide")
+current_user = require_user()
+render_user_menu(current_user)
 
 @st.cache_data
 def load_data():

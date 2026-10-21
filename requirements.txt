@@ -1,5 +1,13 @@
-streamlit
+streamlit>=1.50.0
 supabase
 pandas
 openpyxl
 reportlab
+numpy
+requests
+plotly
+pillow
+fpdf2
+folium
+streamlit-folium
+matplotlib

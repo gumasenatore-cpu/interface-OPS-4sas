@@ -18,8 +18,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.colors as mcolors
+from auth import require_user, render_user_menu
 
-st.set_page_config(page_title="Boletim Operacional 4SAS", layout="wide")
+current_user = require_user()
+render_user_menu(current_user)
 
 # --- INJEÇÃO DE CSS CUSTOMIZADO (BRANDBOOK 4SAS) ---
 st.markdown("""
