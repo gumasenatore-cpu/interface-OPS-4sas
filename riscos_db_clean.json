@@ -1,0 +1,464 @@
+[
+    {
+        "id": "1.1",
+        "categoria_fase": "1 - Preparação e Onshore",
+        "tarefa": "Testes de Bancada, Documentação e Integração",
+        "perigo": "Risco de Acidente / Elétrico (NR-10): Manuseamento de equipamentos ligados à corrente, documentação da equipe incompleta ou sem treinamento.",
+        "consequencias": "Choque elétrico, queima de placas de sensores de alto valor, impedimento de embarque por falta de NRs/ASO.",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 3,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Auditoria de documentação (ASO, NRs, CBSP). Uso de bancadas aterradas. Revisão visual de cabos e conectores submarinos.",
+            "controle_adicional": "N/A",
+            "responsavel": "Diretor Técnico / RH"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 1,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "1.2",
+        "categoria_fase": "1 - Preparação e Onshore",
+        "tarefa": "Logística Base e Movimentação Manual",
+        "perigo": "Risco Ergonômico (NR-17): Movimentação manual e elevação de cases pesados, baterias e falha no transporte rodoviário.",
+        "consequencias": "Lesões musculoesqueléticas, lombalgia, acidentes de trânsito durante o deslocamento para o porto.",
+        "risco_inicial": {
+            "severidade": 3,
+            "probabilidade": 4,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Uso de carrinhos de carga. Limite prático de elevação de 25kg por pessoa. Veículos homologados e motoristas com descanso garantido.",
+            "controle_adicional": "N/A",
+            "responsavel": "Logística"
+        },
+        "risco_residual": {
+            "severidade": 2,
+            "probabilidade": 2,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "1.3",
+        "categoria_fase": "1 - Preparação e Onshore",
+        "tarefa": "Planejamento de Geodésia e Softwares",
+        "perigo": "Risco de Qualidade: Parâmetros geodésicos (Datum, Projeção) configurados incorretamente no software de navegação (HYPACK/QINSY).",
+        "consequencias": "Dados coletados fora da posição real, necessidade de reprocessamento complexo ou perda total da campanha.",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 3,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Validação dupla dos parâmetros geodésicos por dois profissionais diferentes. Teste de transformação de coordenadas antes da mobilização.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 1,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "2.1",
+        "categoria_fase": "2 - Mobilização",
+        "tarefa": "Içamento de Cargas no Cais/Convés",
+        "perigo": "Risco de Acidente (NR-11): Movimentação de cargas suspensas por guindastes. Queda de objetos (Dropped Objects).",
+        "consequencias": "Esmagamento fatal, perda total do equipamento, danos estruturais à embarcação.",
+        "risco_inicial": {
+            "severidade": 5,
+            "probabilidade": 4,
+            "nivel": 20
+        },
+        "mitigacao": {
+            "medidas_padrao": "Permissão de Trabalho (PTW) para içamento. Inspeção de lingas e manilhas. Isolamento da área (ninguém sob a carga). Uso de cabos-guia (Tag Lines).",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / Contramestre"
+        },
+        "risco_residual": {
+            "severidade": 5,
+            "probabilidade": 1,
+            "nivel": 5
+        },
+        "sensores_aplicaveis": [
+            "Geral",
+            "Vibro Core",
+            "Jet Probe",
+            "Sísmica Multicanal"
+        ]
+    },
+    {
+        "id": "2.2",
+        "categoria_fase": "2 - Mobilização",
+        "tarefa": "Fixação de Equipamentos - Sea Fastening",
+        "perigo": "Risco Operacional: Má fixação de guinchos, racks de computadores e cilindros no convés ou cabine.",
+        "consequencias": "Equipamentos rolando ou soltando com o balanço do mar, impacto contra a equipe.",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 3,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Inspeção de soldas ou cintas catraca amarradas aos olhais do convés. Verificação final de amarração antes de largar as amarras.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / Comandante"
+        },
+        "risco_residual": {
+            "severidade": 3,
+            "probabilidade": 1,
+            "nivel": 3
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "2.3",
+        "categoria_fase": "2 - Mobilização",
+        "tarefa": "Pontos Amostrais e Planejamento Espacial",
+        "perigo": "Risco de Projeto: Coordenadas desatualizadas ou equivocadas para os pontos de amostragem ou linhas de navegação.",
+        "consequencias": "Levantamento realizado fora da área de interesse do cliente, desperdício de tempo de embarcação e combustível.",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 3,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Plano de execução do projeto e coordenadas validadas formalmente (por e-mail ou ata) pelo cliente antes de zarpar.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 1,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "3.1",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Condições Metaoceanográficas",
+        "perigo": "Risco Operacional: Mudanças bruscas no tempo, operação em mar agitado, correntes fortes ou tempestades repentinas.",
+        "consequencias": "Danos estruturais à embarcação, homem ao mar, quebra de equipamentos rebocados, aborto emergencial da missão.",
+        "risco_inicial": {
+            "severidade": 5,
+            "probabilidade": 4,
+            "nivel": 20
+        },
+        "mitigacao": {
+            "medidas_padrao": "Acompanhamento diário das previsões metaoceanográficas. Respeitar limites operacionais da embarcação. Autoridade de paralisar o trabalho (Stop Work Authority) garantida a qualquer membro da equipe.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / Comandante"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 2,
+            "nivel": 8
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "3.2",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Posicionamento e Qualidade dos Dados",
+        "perigo": "Risco de Qualidade: Solução de posicionamento inadequada aos objetivos do projeto. Perda de correções diferenciais (RTK/PPP) ou cintilação ionosférica.",
+        "consequencias": "Dados batimétricos ou geofísicos inválidos, não atingindo a ordem de precisão exigida, gerando necessidade de re-shoot (refazer linhas).",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 4,
+            "nivel": 16
+        },
+        "mitigacao": {
+            "medidas_padrao": "Realização de DGPS Health Check (estático em marco geodésico) na mobilização. Monitoramento contínuo do PDOP e status do sinal diferencial durante as linhas.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 1,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "3.3",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Exposição no Convés e Praça de Máquinas",
+        "perigo": "Risco Físico (NR-15): Níveis de ruído acima de 85 dB(A). Exposição contínua a radiação solar (UV) e vibração mecânica.",
+        "consequencias": "Perda auditiva induzida por ruído (PAIR), insolação, queimaduras de pele, fadiga extrema.",
+        "risco_inicial": {
+            "severidade": 3,
+            "probabilidade": 5,
+            "nivel": 15
+        },
+        "mitigacao": {
+            "medidas_padrao": "Uso obrigatório de protetor auricular tipo concha. Fornecimento de protetor solar, roupas com proteção UV e pausas em áreas climatizadas.",
+            "controle_adicional": "N/A",
+            "responsavel": "HSE / Gerente de Operações"
+        },
+        "risco_residual": {
+            "severidade": 2,
+            "probabilidade": 2,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "3.4",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Manuseio de Óleos e Combustíveis",
+        "perigo": "Risco Químico (NR-20): Lubrificação de guinchos, reabastecimento de compressores, contato com fluidos hidráulicos.",
+        "consequencias": "Dermatite de contato, inalação de vapores, derramamento no mar (dano ambiental e multas).",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 3,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Uso de luvas nitrílicas e óculos. Bandejas de contenção (drip trays). Kit de mitigação de vazamento (SOPEP) posicionado e pronto para uso.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / Manutenção"
+        },
+        "risco_residual": {
+            "severidade": 2,
+            "probabilidade": 1,
+            "nivel": 2
+        },
+        "sensores_aplicaveis": [
+            "Geral",
+            "Vibro Core",
+            "Jet Probe",
+            "Sísmica Multicanal"
+        ]
+    },
+    {
+        "id": "3.5",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Habitabilidade e Suporte à Vida",
+        "perigo": "Risco Biológico: Consumo de água de tanques mal higienizados, contato com vetores (mosquitos) em estuários e áreas costeiras.",
+        "consequencias": "Surtos de intoxicação alimentar, desidratação, transmissão de doenças (Dengue, Malária).",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 3,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Limpeza certificada dos tanques. Consumo exclusivo de água mineral engarrafada. Aplicação de repelentes e controle sanitário dos alimentos na cozinha.",
+            "controle_adicional": "N/A",
+            "responsavel": "Logística / Comandante"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 1,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "3.6",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Rotina de Aquisição de Dados",
+        "perigo": "Risco Ergonômico (NR-17): Postura estática na frente de múltiplos monitores, movimentos contínuos do navio (Pitch/Roll), trabalho noturno.",
+        "consequencias": "Distúrbios musculoesqueléticos, fadiga visual aguda, privação de sono, estresse psicológico crônico.",
+        "risco_inicial": {
+            "severidade": 3,
+            "probabilidade": 5,
+            "nivel": 15
+        },
+        "mitigacao": {
+            "medidas_padrao": "Postos de trabalho com cadeiras ajustáveis. Pausas visuais a cada 90 minutos. Cumprimento rigoroso das 12h de trabalho máximo por dia.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / RH"
+        },
+        "risco_residual": {
+            "severidade": 2,
+            "probabilidade": 2,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "3.7",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Manuseio de Sensores de Casco",
+        "perigo": "Risco de Acidente (NR-35): Trabalho sobre a borda da embarcação para calibração, descida e fixação de hastes (poles).",
+        "consequencias": "Queda de homem ao mar (MOB), esmagamento de dedos nos flanges, perda do sensor no mar.",
+        "risco_inicial": {
+            "severidade": 5,
+            "probabilidade": 3,
+            "nivel": 15
+        },
+        "mitigacao": {
+            "medidas_padrao": "Uso obrigatório de colete salva-vidas automático e cinto de segurança ancorado. Motores da embarcação em neutro. Cabos de retenção instalados no sensor.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações"
+        },
+        "risco_residual": {
+            "severidade": 5,
+            "probabilidade": 1,
+            "nivel": 5
+        },
+        "sensores_aplicaveis": [
+            "MBES",
+            "SBES",
+            "SVP"
+        ]
+    },
+    {
+        "id": "3.8",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Operação de Sensores Rebocados",
+        "perigo": "Risco Operacional (NR-12): Equipamento enroscando no fundo ou em artefatos de pesca. Tensão extrema no cabo criando zonas de chicoteamento ('Snap-back zones').",
+        "consequencias": "Ruptura violenta do cabo chicoteando pelo convés (potencial fatal). Perda do torpedo (Towfish) no fundo.",
+        "risco_inicial": {
+            "severidade": 5,
+            "probabilidade": 4,
+            "nivel": 20
+        },
+        "mitigacao": {
+            "medidas_padrao": "Demarcação e isolamento das Zonas de Snap-back. Vigia de convés em comunicação contínua via rádio. Uso de Weak Link. Alicate corta-cabo posicionado para emergências.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 1,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "SSS",
+            "MAG",
+            "SBP"
+        ]
+    },
+    {
+        "id": "3.9",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Operações Sísmicas - Sparker/Boomer",
+        "perigo": "Risco Elétrico (NR-10/NR-12): Geração de alta voltagem em conveses úmidos. Operação contínua de guinchos rotativos pesados.",
+        "consequencias": "Eletrocussão fatal. Incêndio elétrico no banco de capacitores. Esmagamento de membros nos tambores rotativos.",
+        "risco_inicial": {
+            "severidade": 5,
+            "probabilidade": 4,
+            "nivel": 20
+        },
+        "mitigacao": {
+            "medidas_padrao": "Isolamento elétrico do convés com tapetes de borracha. Procedimento rígido de LOTO. Aviso 'All Clear' via rádio antes do disparo. Proibido uso de roupas soltas.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / Diretor Técnico"
+        },
+        "risco_residual": {
+            "severidade": 5,
+            "probabilidade": 1,
+            "nivel": 5
+        },
+        "sensores_aplicaveis": [
+            "Sísmica Monocanal",
+            "Sísmica Multicanal"
+        ]
+    },
+    {
+        "id": "3.10",
+        "categoria_fase": "3 - Operação",
+        "tarefa": "Amostragem Geotécnica e Mergulho Raso (Jet Probe)",
+        "perigo": "Risco Operacional e Mergulho Raso: Içamento da torre de aço. Operação submarina próxima à costa com bombas d'água de altíssima pressão. Forte influência de correntes, ondulação (swell) e baixa visibilidade.",
+        "consequencias": "Choque do mergulhador contra o fundo ou casco da embarcação. Injeção de água sob alta pressão na pele, afogamento e emaranhamento em umbilicais devido às correntes.",
+        "risco_inicial": {
+            "severidade": 5,
+            "probabilidade": 4,
+            "nivel": 20
+        },
+        "mitigacao": {
+            "medidas_padrao": "Plano de Mergulho Raso aprovado (PTW). Monitoramento constante de maré e correntes. Mergulhador de resgate (Standby Diver) pronto. Manter umbilicais tensionados para evitar emaranhamento.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / Equipe de Mergulho"
+        },
+        "risco_residual": {
+            "severidade": 4,
+            "probabilidade": 1,
+            "nivel": 4
+        },
+        "sensores_aplicaveis": [
+            "Vibro Core",
+            "Jet Probe"
+        ]
+    },
+    {
+        "id": "4.1",
+        "categoria_fase": "4 - Desmobilização",
+        "tarefa": "Encerramento e Logística Reversa",
+        "perigo": "Risco Humano/Fadiga: Desmobilizar apressadamente equipamentos pesados. Perda de concentração e relaxamento da equipe devido à pressa no retorno.",
+        "consequencias": "Acidentes de trabalho no último dia (cortes, prensamentos), acidentes de trânsito no retorno terrestre.",
+        "risco_inicial": {
+            "severidade": 4,
+            "probabilidade": 4,
+            "nivel": 16
+        },
+        "mitigacao": {
+            "medidas_padrao": "Toolbox Talk focada no não relaxamento da segurança. Manutenção dos PTWs de içamento. Descanso obrigatório de 12h antes de dirigir os veículos de retorno.",
+            "controle_adicional": "N/A",
+            "responsavel": "Gerente de Operações / RH"
+        },
+        "risco_residual": {
+            "severidade": 3,
+            "probabilidade": 1,
+            "nivel": 3
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    },
+    {
+        "id": "4.2",
+        "categoria_fase": "4 - Desmobilização",
+        "tarefa": "Desinstalação e Transporte de Ativos",
+        "perigo": "Risco Operacional: Acondicionamento incorreto de sensores ainda molhados ou com salinidade. Desconexão brusca de cabos.",
+        "consequencias": "Corrosão acelerada nos conectores, pinos partidos, fibra ótica rompida, inutilizando o ativo para o próximo projeto.",
+        "risco_inicial": {
+            "severidade": 3,
+            "probabilidade": 4,
+            "nivel": 12
+        },
+        "mitigacao": {
+            "medidas_padrao": "Lavagem rigorosa com água doce. Secagem e aplicação de protetivo (WD-40/CorrosionX) nos conectores. Uso de tampas de proteção mecânica antes do fechamento das cases.",
+            "controle_adicional": "N/A",
+            "responsavel": "Logística / Gerente de Operações"
+        },
+        "risco_residual": {
+            "severidade": 2,
+            "probabilidade": 1,
+            "nivel": 2
+        },
+        "sensores_aplicaveis": [
+            "Geral"
+        ]
+    }
+]
