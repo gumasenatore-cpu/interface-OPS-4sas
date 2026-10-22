@@ -1,6 +1,5 @@
 import streamlit as st
 from supabase import Client, create_client
-from supabase.lib.client_options import ClientOptions
 
 
 AUTH_SESSION_KEY = "portal_auth_session"
@@ -25,11 +24,7 @@ def create_supabase_client() -> Client:
             "Configure SUPABASE_URL e SUPABASE_KEY nos secrets do Streamlit."
         )
 
-    return create_client(
-        url,
-        key,
-        options=ClientOptions(auto_refresh_token=False, persist_session=False),
-    )
+    return create_client(url, key)
 
 
 def _response_user(response, client: Client):
