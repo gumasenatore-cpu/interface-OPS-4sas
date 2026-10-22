@@ -32,8 +32,20 @@ def create_supabase_client() -> Client:
     )
 
 
-def _store_session(client: Client, user) -> dict:
-    session = client.auth.get_session()
+def _response_user(response, client: Client):
+    user = getattr(response, "user", None)
+    if user is None:
+        session = getattr(response, "session", None)
+        user = getattr(session, "user", None)
+    if user is None:
+        user_response = client.auth.get_user()
+        user = getattr(user_response, "user", user_response)
+    if user is None:
+        raise ValueError("O Supabase não retornou um usuário para esta sessão.")
+    return user
+
+
+def _store_session(session, user) -> dict:
     if not session:
         raise ValueError("A sessão Supabase não foi criada.")
 
@@ -51,13 +63,12 @@ def sign_in(email: str, password: str) -> dict:
     response = client.auth.sign_in_with_password(
         {"email": email.strip(), "password": password}
     )
-    if not response.session:
+    session = getattr(response, "session", None)
+    if not session:
         raise ValueError("Não foi possível iniciar uma sessão para esta conta.")
 
-    user = client.auth.get_user().user
-    if not user:
-        raise ValueError("Não foi possível validar esta conta.")
-    return _store_session(client, user)
+    user = _response_user(response, client)
+    return _store_session(session, user)
 
 
 def restore_session() -> dict | None:
@@ -67,13 +78,12 @@ def restore_session() -> dict | None:
 
     try:
         client = create_supabase_client()
-        client.auth.set_session(
+        response = client.auth.set_session(
             saved_session["access_token"], saved_session["refresh_token"]
         )
-        user = client.auth.get_user().user
-        if not user:
-            raise ValueError("A sessão não possui um usuário válido.")
-        return _store_session(client, user)
+        session = getattr(response, "session", None)
+        user = _response_user(response, client)
+        return _store_session(session, user)
     except Exception:
         clear_session()
         return None
@@ -86,13 +96,12 @@ def authenticated_client() -> Client:
 
     client = create_supabase_client()
     try:
-        client.auth.set_session(
+        response = client.auth.set_session(
             saved_session["access_token"], saved_session["refresh_token"]
         )
-        user = client.auth.get_user().user
-        if not user:
-            raise ValueError("A sessão não possui um usuário válido.")
-        _store_session(client, user)
+        session = getattr(response, "session", None)
+        user = _response_user(response, client)
+        _store_session(session, user)
     except Exception as exc:
         clear_session()
         raise PermissionError("A sessão expirou. Entre novamente.") from exc

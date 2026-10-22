@@ -24,6 +24,13 @@ def login_error_message(error: Exception) -> str:
         return "A chave Supabase configurada foi recusada. Confira SUPABASE_KEY nos Secrets do app."
     if any(term in details for term in ("connecterror", "connectionerror", "timed out", "timeout")):
         return "Não foi possível alcançar o Supabase. Confira a URL e a conexão do app."
+    if isinstance(error, AttributeError):
+        message = str(error)
+        missing_attribute = message.rsplit("'", 2)[1] if "'" in message else "desconhecido"
+        return (
+            f"Erro interno ao validar a sessão (atributo ausente: {missing_attribute}). "
+            "Atualize o app e tente novamente."
+        )
 
     return (
         f"Falha ao autenticar ({type(error).__name__}). "

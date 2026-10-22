@@ -1,5 +1,5 @@
 streamlit>=1.50.0
-supabase
+supabase>=2.33.0,<3.0.0
 pandas
 openpyxl
 reportlab
