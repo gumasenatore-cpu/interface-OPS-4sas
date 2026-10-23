@@ -26,19 +26,6 @@ render_user_menu(current_user)
 # --- INJEÇÃO DE CSS CUSTOMIZADO (BRANDBOOK 4SAS) ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;600;700&display=swap');
-    
-    html, body, [class*="css"] {
-        font-family: 'Carbona Variable', 'Inter', sans-serif;
-        font-size: 0.85rem !important;
-    }
-    
-    .sub-title {
-        font-family: 'Carbona Variable Mono', 'Space Mono', monospace;
-        color: #AAAAAA;
-        font-size: 0.9rem;
-    }
-    
     .stAlert {
         border-radius: 4px;
         border-left: 4px solid #F32735;
@@ -46,14 +33,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 1. Exibe a logo original na barra lateral
-try:
-    logo = Image.open("logo.png")
-    st.sidebar.image(logo, width=120)
-except Exception:
-    st.sidebar.title("4SAS - Operações")
-
-st.sidebar.markdown("---")
 st.sidebar.header("Painel de Controle")
 
 lat, lon = -25.51, -48.51

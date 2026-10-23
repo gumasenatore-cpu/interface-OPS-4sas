@@ -22,10 +22,6 @@ def load_data():
 riscos_db = load_data()
 
 # --- BARRA LATERAL ---
-st.sidebar.title("4SAS Offshore")
-st.sidebar.markdown("*Precisão além da superfície*")
-st.sidebar.divider()
-
 st.sidebar.header("1. Detalhes da Campanha")
 colaborador = st.sidebar.text_input("Nome do Colaborador")
 data_apr = st.sidebar.date_input("Data da APR", datetime.date.today())
