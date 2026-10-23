@@ -37,7 +37,7 @@ def apply_watermark_background():
                 position: relative;
             }}
 
-            /* Injeção da marca d'água via pseudo-elemento com opacidade ajustada */
+            /* Marca d'água ampliada em 50% e com transparência aumentada */
             [data-testid="stAppViewContainer"]::before {{
                 content: "";
                 position: absolute;
@@ -46,10 +46,10 @@ def apply_watermark_background():
                 width: 100%;
                 height: 100%;
                 background-image: url("data:image/png;base64,{encoded_string}");
-                background-size: min(80vw, 550px); /* Tamanho elegante e proporcional ao centro */
+                background-size: min(90vw, 825px); /* +50% maior em relação aos 550px anteriores */
                 background-position: center center;
                 background-repeat: no-repeat;
-                opacity: 0.22; /* Ajuste o nível de transparência aqui (0.10 a 0.35) */
+                opacity: 0.15; /* Opacidade reduzida para aumentar a transparência */
                 pointer-events: none;
                 z-index: 0;
             }}
@@ -70,5 +70,6 @@ def apply_watermark_background():
         st.error("Imagem 'assets/background_4sas.png' não encontrada.")
 
 
-# Aplica a marca d'água sutil no portal
+# Aplica a marca d'água ajustada
+apply_watermark_background()til no portal
 apply_watermark_background()
