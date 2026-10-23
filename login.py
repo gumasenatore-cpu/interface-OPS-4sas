@@ -92,7 +92,7 @@ st.markdown(
             width: 100%;
             height: auto;
             object-fit: contain;
-            border-radius: 2px;
+            border-radius: 6px;
         }
 
         .st-key-login-brand .login-title {
@@ -157,7 +157,7 @@ st.markdown(
             margin-right: auto !important;
             color: #a0a0a0;
             font-family: 'Carbona Variable', 'Inter', sans-serif;
-            font-size: 0.82rem;
+            font-size: 0.72rem;
             text-align: center;
         }
 
