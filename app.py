@@ -31,7 +31,7 @@ if not user and st.session_state.get(AUTH_PENDING_ACTION_KEY):
     st.session_state.pop(AUTH_PENDING_ACTION_KEY, None)
 
 if user:
-    st.logo("assets/logo_4sas.png", size="small")
+    st.logo("assets/logo_4sas.png", size="large")
     st.markdown(
         """
         <style>
