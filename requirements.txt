@@ -13,3 +13,4 @@ streamlit-folium
 matplotlib
 rasterio
 pyproj
+# forcar rebuild do servidor
