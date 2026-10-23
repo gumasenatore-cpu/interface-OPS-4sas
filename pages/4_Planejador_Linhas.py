@@ -1,164 +1,271 @@
-from utils.geo_engine import get_image_bounds_from_bytes, calculate_survey_parameters, generate_survey_lines, calculate_bearing
-from utils.exports import generate_csv_report, generate_hypack_lnw, generate_qinsy_txt
-from utils.geo_engine import get_image_bounds_from_bytes, calculate_survey_parameters, generate_survey_lines
 import streamlit as st
 import folium
+from folium.plugins import Draw
 from streamlit_folium import st_folium
-import os
 
+from utils.geo_engine import (
+    get_geotiff_overlay_data,
+    calculate_survey_parameters,
+    generate_survey_lines,
+    calculate_bearing,
+)
+from utils.exports import generate_hypack_lnw, generate_qinsy_txt, generate_csv
 
-# Importa a função de upload que criamos no utils
-from utils.supabase_client import upload_image_to_storage
-
-# 1. Configuração do Padrão Corporativo 4SAS
-st.set_page_config(page_title="4SAS | Planejador de Linhas", layout="wide")
-st.markdown("""
-    <style>
-    /* Tipografia Carbona Variable e design system 4SAS */
-    html, body, [class*="css"] {
-        font-family: 'Carbona Variable', sans-serif !important;
-    }
-    .stButton>button {
-        background-color: #0056b3;
-        color: white;
-    }
-    </style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Planejador de Linhas | 4SAS", layout="wide")
 
 st.title("Planejador de Linhas")
-st.markdown("Planejamento automatizado de malhas de levantamento hidrográfico (NORMAM-501).")
+st.caption("Módulo Geoespacial para Batimetria (NORMAM-501 / IHO) e Geofísica Rasa (EdgeTech 2000-DSS SSS/SBP)")
 
-# 2. Sidebar - Upload e Parâmetros
-with st.sidebar:
-    st.header("1. Ingestão de Dados")
-    uploaded_file = st.file_uploader("Upload da Imagem GeoTIFF", type=["tif", "tiff", "png", "jpeg"])
+# --- GUIA RÁPIDO DE OPERAÇÃO (UX) ---
+with st.expander("📌 **Guia Rápido de Operação & Orientação de Rumo (Clique para expandir)**", expanded=True):
+    st.markdown("""
+    **Como planejar a grade de linhas em 4 passos:**
     
-    st.markdown("---")
-    st.header("2. Parâmetros do Survey")
-    sensor = st.selectbox("Sensor Utilizado", ["Kongsberg EA440 (SBES)", "R2Sonic 2024 (MBES)"])
-    scope = st.selectbox("Escopo Normativo", ["NORMAM-501 Ordem Especial", "NORMAM-501 Ordem 1a", "Reconhecimento"])
-    depth = st.number_input("Profundidade Média (m)", min_value=1, value=20)
-    heading = st.number_input("Rumo Desejado das Linhas (°)", min_value=0, max_value=359, value=0)
+    1. 🖼️ **(Opcional) Subir Imagem GeoTIFF:**
+       - Use o campo na barra lateral para carregar a imagem georreferenciada (`.tif` ou `.tiff`). Ela será sobreposta no topo do mapa.
+    2. 📏 **Medir o Rumo (Azimute) Ideal:**
+       - Ative a ferramenta de linha no mapa (ícone de linha à esquerda) e trace um segmento sobre a feição de referência.
+       - O Azimute calculado aparecerá na barra lateral.
+    3. ⬡ **Delimitar a Área de Levantamento:**
+       - Clique no ícone de **Polígono** no mapa e desenhe o perímetro da área diretamente sobre a imagem carregada.
+    4. ⚙️ **Configurar Bordo do Transdutor & Sensor:**
+       - Indique a posição de montagem da haste do MBES (Bombordo/Estibordo/Centro) para garantir a cobertura nas margens e exporte o grid pronto (`.lnw`, `.txt`, `.csv`).
+    """)
 
-# 3. Lógica de Upload para o Supabase (Com controle de Estado)
-image_url = None
+# --- BARRA LATERAL: UPLOAD E PARÂMETROS OPERACIONAIS ---
+st.sidebar.header("📂 Imagem de Fundo (GeoTIFF)")
+uploaded_geotiff = st.sidebar.file_uploader("Carregar GeoTIFF (.tif / .tiff)", type=["tif", "tiff"])
 
-if uploaded_file is not None:
-    # Verifica se já subimos ESSE arquivo específico na sessão atual
-    if "uploaded_filename" not in st.session_state or st.session_state.uploaded_filename != uploaded_file.name:
-        with st.spinner("Enviando imagem para o Storage da 4SAS..."):
-            file_bytes = uploaded_file.getvalue()
-            
-            # Executa o upload e salva a URL na memória do Streamlit
-            url = upload_image_to_storage(file_bytes, uploaded_file.name)
-            if url:
-                st.session_state.image_url = url
-                st.session_state.uploaded_filename = uploaded_file.name
-    
-    # Recupera a URL da memória para não precisar subir de novo
-    if "image_url" in st.session_state:
-        image_url = st.session_state.image_url
-        st.sidebar.success("Upload concluído com sucesso!")
+image_opacity = 0.85
+if uploaded_geotiff is not None:
+    image_opacity = st.sidebar.slider("Opacidade da Imagem", min_value=0.1, max_value=1.0, value=0.85, step=0.05)
 
-# 4. Renderização do Mapa Principal
-st.subheader("Mapa de Planejamento")
+st.sidebar.markdown("---")
+st.sidebar.header("⚙️ Configurações do Levantamento")
 
-# Coordenada padrão (vai mudar automaticamente se tiver imagem)
-center_lat, center_lon = -22.90, -43.15
-zoom = 12
-bounds = None
-
-# Se tivermos a imagem carregada na sessão, extraímos os dados geográficos
-if uploaded_file is not None:
-    file_bytes = uploaded_file.getvalue()
-    bounds = get_image_bounds_from_bytes(file_bytes)
-    
-    if bounds:
-        # Calcula o centro da imagem para o mapa iniciar focado nela
-        center_lat = (bounds[0][0] + bounds[1][0]) / 2.0
-        center_lon = (bounds[0][1] + bounds[1][1]) / 2.0
-    else:
-        st.warning("Aviso: A imagem enviada não possui dados de georeferenciamento (Spatial Reference). O mapa ficará na posição padrão.")
-
-# Inicializa o mapa focado no centro correto
-m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, tiles="Esri.WorldImagery")
-
-# Adiciona as ferramentas de desenho
-# Adiciona as ferramentas de desenho
-from folium.plugins import Draw
-draw = Draw(
-    draw_options={'polygon': True, 'polyline': True, 'rectangle': True, 'circle': False, 'marker': False, 'circlemarker': False},
-    edit_options={'edit': True, 'remove': True} # Ativa a lixeirinha para apagar a linha depois
+method = st.sidebar.selectbox(
+    "Método / Equipamento",
+    ["Batimetria (NORMAM-501 / IHO S-44)", "Geofísica Rasa (EdgeTech 2000-DSS SSS/SBP)"]
 )
-m.add_child(draw)
 
-# Se temos a URL pública do Supabase e as coordenadas da imagem, nós a "colamos" no mapa
-if image_url and bounds:
+tie_line_spacing = None
+
+if method == "Batimetria (NORMAM-501 / IHO S-44)":
+    st.sidebar.subheader("🚤 Instalação do Transdutor (MBES)")
+    transducer_pos = st.sidebar.selectbox(
+        "Bordo de Montagem da Haste / Sonar",
+        [
+            "Centro / Quilha (Midship)",
+            "Haste a Bombordo (Port Side)",
+            "Haste a Estibordo (Starboard Side)",
+            "Dual Head (Cabeça Dupla - Inclinado BB/ES)"
+        ]
+    )
+    
+    transducer_offset = 0.0
+    if "Haste" in transducer_pos:
+        transducer_offset = st.sidebar.number_input(
+            "Offset Transversal da Haste em Relação ao Centro (m)",
+            min_value=0.1, max_value=10.0, value=1.5, step=0.1
+        )
+        st.sidebar.warning(
+            f"⚠️ **Atenção Operacional:** O transdutor está montado a {transducer_offset:.1f}m a "
+            f"{'Bombordo' if 'Bombordo' in transducer_pos else 'Estibordo'}. Na navegação próximo a estruturas/margens, "
+            f"garanta que este bordo esteja voltado para o raso para manter a cobertura total!"
+        )
+
+    norm = st.sidebar.selectbox(
+        "Norma / Categoria",
+        ["NORMAM-501 Cat A", "NORMAM-501 Cat B", "NORMAM-501 Cat C", "IHO S-44 Special Order", "IHO S-44 Order 1a"]
+    )
+    depth = st.sidebar.number_input("Profundidade Média Local (m)", min_value=1.0, value=12.0, step=0.5)
+    beam_angle = st.sidebar.slider("Abertura do Feixe Multifeixe (°)", min_value=60, max_value=140, value=120)
+    overlap = st.sidebar.slider("Sobreposição Mínima (%)", min_value=10, max_value=50, value=20)
+    
+    line_spacing = calculate_survey_parameters(
+        method, depth=depth, norm=norm, beam_angle=beam_angle, overlap=overlap, transducer_pos=transducer_pos
+    )
+
+else:  # Geofísica Rasa EdgeTech 2000-DSS
+    st.sidebar.subheader("🔊 Parâmetros EdgeTech 2000-DSS")
+    range_m = st.sidebar.select_slider(
+        "Alcance por Canal SSS (Range em metros)",
+        options=[37.5, 50.0, 75.0, 100.0, 150.0, 200.0],
+        value=75.0
+    )
+    
+    coverage_opt = st.sidebar.selectbox(
+        "Nível de Cobertura SSS",
+        [
+            "200% - Cobertura Dupla / Padrão Petrobras",
+            "150% - 50% de Sobreposição entre faixas",
+            "100% - Mosaico Simples (Sem sobreposição)"
+        ]
+    )
+    coverage_pct = 200 if "200%" in coverage_opt else (150 if "150%" in coverage_opt else 100)
+    
+    line_spacing = calculate_survey_parameters(
+        method, range_m=range_m, coverage_pct=coverage_pct
+    )
+    
+    enable_sbp = st.sidebar.checkbox("Gerar Transversais de Amarração (SBP)", value=True)
+    if enable_sbp:
+        tie_line_spacing = st.sidebar.selectbox(
+            "Espaçamento das Transversais SBP (m)",
+            [50, 100, 200, 500],
+            index=2
+        )
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📐 Geometria & Rumo")
+
+azimuth = st.sidebar.number_input("Rumo / Azimute das Linhas Principais (°)", min_value=0.0, max_value=360.0, value=45.0, step=1.0)
+manual_spacing_override = st.sidebar.checkbox("Sobrescrever Espaçamento Calculado")
+
+if manual_spacing_override:
+    final_spacing = st.sidebar.number_input("Espaçamento Manual (m)", min_value=1.0, value=float(line_spacing), step=1.0)
+else:
+    final_spacing = line_spacing
+
+st.sidebar.info(f"📏 **Espaçamento Calculado:** {final_spacing:.1f} m")
+
+# --- PROCESSAMENTO DO GEOTIFF E CONFIGURAÇÃO DO MAPA ---
+map_location = [-22.9, -43.1]
+map_zoom = 13
+overlay_img_url = None
+geotiff_bounds = None
+
+if uploaded_geotiff is not None:
+    try:
+        overlay_img_url, geotiff_bounds = get_geotiff_overlay_data(uploaded_geotiff.getvalue())
+        lat_center = (geotiff_bounds[0][0] + geotiff_bounds[1][0]) / 2.0
+        lon_center = (geotiff_bounds[0][1] + geotiff_bounds[1][1]) / 2.0
+        map_location = [lat_center, lon_center]
+        map_zoom = 14
+        st.sidebar.success("✅ GeoTIFF renderizado com sucesso!")
+    except Exception as e:
+        st.sidebar.error(f"Erro ao processar GeoTIFF: {e}")
+
+m = folium.Map(location=map_location, zoom_start=map_zoom, tiles="OpenStreetMap")
+
+# Renderização da Imagem por cima do mapa base (zindex=10)
+if overlay_img_url and geotiff_bounds:
     folium.raster_layers.ImageOverlay(
-        image=image_url,
-        bounds=bounds,
-        opacity=0.6, # 60% de opacidade para vermos o satélite por baixo
-        name="Imagem de Survey"
+        image=overlay_img_url,
+        bounds=geotiff_bounds,
+        opacity=image_opacity,
+        interactive=True,
+        zindex=10
     ).add_to(m)
-    
-    # Força o mapa a dar zoom exato na sua imagem
-    m.fit_bounds(bounds)
+    m.fit_bounds(geotiff_bounds)
 
-# Renderiza tudo na tela
-output = st_folium(m, width=1200, height=600, returned_objects=["last_active_drawing"])
+# --- RECUPERAÇÃO DO POLÍGONO DE STATE / DESENHO ---
+if "last_polygon" not in st.session_state:
+    st.session_state["last_polygon"] = None
 
-if output and output.get("last_active_drawing"):
-    geom = output["last_active_drawing"]["geometry"]
-    geom_type = geom["type"]
+# Se já houver um polígono salvo, desenha as linhas calculadas no próprio mapa
+if st.session_state["last_polygon"]:
+    current_lines = generate_survey_lines(
+        st.session_state["last_polygon"], azimuth, final_spacing, tie_line_spacing
+    )
+    for line in current_lines:
+        color = "#E65100" if line["type"].startswith("Amarração") else "#0D47A1"
+        dash_array = "5, 5" if line["type"].startswith("Amarração") else None
+        
+        folium.PolyLine(
+            locations=line["coords_wgs84"],
+            color=color,
+            weight=2.5,
+            dash_array=dash_array,
+            popup=f"Linha: {line['id']} | Az: {line['azimuth']}° | Comp: {line['length_m']}m"
+        ).add_to(m)
+
+# Ferramentas de Desenho no Mapa
+draw = Draw(
+    export=True,
+    filename="area_survey.geojson",
+    position="topleft",
+    draw_options={
+        "polyline": True,
+        "polygon": True,
+        "rectangle": True,
+        "circle": False,
+        "marker": False,
+        "circlemarker": False,
+    },
+    edit_options={"edit": True}
+)
+draw.add_to(m)
+
+map_data = st_folium(m, width="100%", height=550)
+
+# --- PROCESSAMENTO DOS DADOS DESENHADOS NO MAPA ---
+polygon_geom = st.session_state["last_polygon"]
+measured_bearing = None
+
+if map_data and map_data.get("all_drawings"):
+    drawings = map_data["all_drawings"]
     
-    if geom_type == "LineString":
-        # Se o usuário desenhou uma linha reta
-        coords = geom["coordinates"]
-        lon1, lat1 = coords[0]
-        lon2, lat2 = coords[-1]
+    for feature in drawings:
+        geom_type = feature["geometry"]["type"]
+        coords = feature["geometry"]["coordinates"]
         
-        rumo = calculate_bearing(lon1, lat1, lon2, lat2)
-        st.info(f"🧭 **Rumo Medido:** {rumo}° (Use este valor no menu lateral. Para apagar a linha, use o ícone de lixeira no mapa).")
-        st.warning("Agora desenhe o Polígono para definir a área do survey.")
+        # Medição de Rumo (Linha)
+        if geom_type == "LineString" and len(coords) >= 2:
+            lon1, lat1 = coords[0]
+            lon2, lat2 = coords[1]
+            measured_bearing = calculate_bearing(lat1, lon1, lat2, lon2)
+            st.sidebar.success(f"🎯 Azimute Medido no Mapa: **{measured_bearing:.1f}°**")
+            
+        # Área do Levantamento (Polígono)
+        elif geom_type in ["Polygon"]:
+            polygon_geom = feature["geometry"]
+            st.session_state["last_polygon"] = polygon_geom
+
+# --- GERAÇÃO E EXIBIÇÃO DE MÉTRICAS & DOWNLOADS ---
+if polygon_geom:
+    generated_lines = generate_survey_lines(
+        polygon_geom, azimuth, final_spacing, tie_line_spacing
+    )
+    
+    if generated_lines:
+        total_len_km = sum(l["length_m"] for l in generated_lines) / 1000.0
+        n_main = sum(1 for l in generated_lines if l["type"].startswith("Principal"))
+        n_tie = len(generated_lines) - n_main
         
-    elif geom_type == "Polygon":
-        # Lógica original para quando o usuário desenha a área do survey
-        geojson_polygon = geom
-        st.success("Polígono desenhado com sucesso! Processando malha...")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Espaçamento Principal", f"{final_spacing:.1f} m")
+        col2.metric("Linhas Principais", f"{n_main}")
+        col3.metric("Transversais (SBP)", f"{n_tie}")
+        col4.metric("Quilometragem Total", f"{total_len_km:.2f} km")
         
-        spacing, justificativa = calculate_survey_parameters(sensor, scope, depth)
-        st.markdown("### Justificativa Técnica")
-        st.info(justificativa)
+        st.markdown("### 📥 Exportar Grid de Navegação")
+        exp_col1, exp_col2, exp_col3 = st.columns(3)
         
-        if st.button("Gerar Linhas de Survey", type="primary"):
-            with st.spinner("Calculando geometria e interseções..."):
-                survey_lines = generate_survey_lines(geojson_polygon, spacing, heading)
-                
-                for i, line in enumerate(survey_lines):
-                    coords_line = [(lat, lon) for lon, lat in line.coords]
-                    folium.PolyLine(
-                        locations=coords_line,
-                        color='red',
-                        weight=2,
-                        tooltip=f"Linha {i+1}"
-                    ).add_to(m)
-                
-                st.session_state["lines_generated"] = True
-                st_folium(m, width=1200, height=600, key="mapa_com_linhas")
-                
-                st.success(f"Foram geradas {len(survey_lines)} linhas com espaçamento de {spacing:.1f}m no rumo {heading}°.")
-                
-                # --- MÓDULO DE EXPORTAÇÃO ---
-                st.markdown("---")
-                st.subheader("📥 Exportar Plano de Linhas")
-                csv_bytes = generate_csv_report(survey_lines, heading)
-                hypack_bytes = generate_hypack_lnw(survey_lines)
-                qinsy_bytes = generate_qinsy_txt(survey_lines)
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.download_button("📄 Planilha (CSV)", csv_bytes, "plano.csv", "text/csv", use_container_width=True)
-                with col2:
-                    st.download_button("🎯 Exportar Hypack", hypack_bytes, "linhas.lnw", "text/plain", use_container_width=True)
-                with col3:
-                    st.download_button("⚓ Exportar Qinsy", qinsy_bytes, "linhas.txt", "text/plain", use_container_width=True)
+        lnw_data = generate_hypack_lnw(generated_lines)
+        exp_col1.download_button(
+            "📄 Baixar Hypack (.lnw)",
+            data=lnw_data,
+            file_name="grid_survey_4sas.lnw",
+            mime="text/plain"
+        )
+        
+        txt_data = generate_qinsy_txt(generated_lines)
+        exp_col2.download_button(
+            "📄 Baixar Qinsy (.txt)",
+            data=txt_data,
+            file_name="grid_survey_4sas.txt",
+            mime="text/plain"
+        )
+        
+        csv_data = generate_csv(generated_lines)
+        exp_col3.download_button(
+            "📊 Baixar Lista de Linhas (.csv)",
+            data=csv_data,
+            file_name="grid_survey_4sas.csv",
+            mime="text/csv"
+        )
+    else:
+        st.warning("⚠️ O polígono desenhado é muito pequeno para o espaçamento selecionado.")
+else:
+    st.info("💡 Suba uma imagem GeoTIFF ou desenhe um **Polígono** no mapa para gerar o grid automático.")
