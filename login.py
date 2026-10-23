@@ -1,3 +1,6 @@
+import base64
+from pathlib import Path
+
 import streamlit as st
 
 from auth import SupabaseConfigurationError, sign_in
@@ -59,71 +62,56 @@ st.markdown(
         }
 
         .st-key-login-shell {
-            min-height: 100svh;
+            box-sizing: border-box;
+            width: 100%;
+            min-height: calc(100svh - 2rem);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 1.25rem 0;
+            margin: 0 auto !important;
+            padding: 0.5rem 0;
         }
 
         .st-key-login-brand {
-            width: min(100%, 400px);
+            width: min(100%, 360px);
             margin-left: auto !important;
             margin-right: auto !important;
             align-items: center !important;
             text-align: center;
-            margin-bottom: 1.15rem;
+            margin-bottom: 0.75rem;
         }
 
-        .st-key-login-brand > [data-testid="stElementContainer"] {
-            width: 100% !important;
-            display: flex !important;
-            justify-content: center !important;
+        .login-wordmark {
+            width: min(100%, 220px);
+            margin: 0 auto;
         }
 
-        .st-key-login-brand [data-testid="stFullScreenFrame"] {
-            display: flex !important;
-            justify-content: center !important;
-        }
-
-        .st-key-login-brand [data-testid="stImage"] img {
+        .login-wordmark img {
             display: block;
-            width: 132px !important;
-            height: 132px !important;
-            margin: 0 auto !important;
+            width: 100%;
+            height: auto;
             object-fit: contain;
-            border-radius: 4px;
+            border-radius: 2px;
         }
 
-        .st-key-login-brand [data-testid="stImage"] {
-            display: flex;
-            width: 100% !important;
-            justify-content: center;
-        }
-
-        .st-key-login-brand [data-testid="stImageContainer"] {
-            width: 100% !important;
-            justify-content: center;
-        }
-
-        .login-title {
-            margin: 0.55rem 0 0;
+        .st-key-login-brand .login-title {
+            margin: 0.6rem 0 0 !important;
             color: #ffffff;
             font-family: 'Carbona Variable', 'Inter', sans-serif;
-            font-size: 1.65rem;
-            font-weight: 700;
+            font-size: 1.2rem !important;
+            font-weight: 400 !important;
             letter-spacing: 0;
-            line-height: 1.15;
+            line-height: 1.3;
             text-align: center;
         }
 
         .st-key-login-panel {
             box-sizing: border-box;
-            width: min(100%, 400px);
+            width: min(100%, 360px);
             margin-left: auto !important;
             margin-right: auto !important;
-            padding: 1.2rem 1.4rem 1rem;
+            padding: 1.05rem 1.2rem 0.9rem;
             border: 1px solid #303030;
             border-top: 3px solid #f32735;
             border-radius: 4px;
@@ -163,8 +151,10 @@ st.markdown(
         }
 
         .login-help {
-            width: min(100%, 400px);
-            margin-top: 0.8rem;
+            width: min(100%, 360px);
+            margin-top: 0.65rem;
+            margin-left: auto !important;
+            margin-right: auto !important;
             color: #a0a0a0;
             font-family: 'Carbona Variable', 'Inter', sans-serif;
             font-size: 0.82rem;
@@ -173,16 +163,15 @@ st.markdown(
 
         @media (max-width: 520px) {
             .st-key-login-shell {
-                min-height: 100svh;
+                min-height: calc(100svh - 2rem);
             }
 
             .st-key-login-panel {
-                padding: 1rem 1rem 0.85rem;
+                padding: 0.9rem 0.9rem 0.75rem;
             }
 
-            .st-key-login-brand [data-testid="stImage"] img {
-                width: 116px !important;
-                height: 116px !important;
+            .login-wordmark {
+                width: min(100%, 220px);
             }
         }
     </style>
@@ -192,8 +181,14 @@ st.markdown(
 
 with st.container(key="login-shell"):
     with st.container(key="login-brand"):
-        st.image("assets/logo_4sas.png", width=132)
-        st.markdown('<h1 class="login-title">OPERAÇÕES</h1>', unsafe_allow_html=True)
+        wordmark_data = base64.b64encode(
+            Path("assets/logo_4sas_wordmark.png").read_bytes()
+        ).decode("ascii")
+        st.markdown(
+            f'<div class="login-wordmark"><img src="data:image/png;base64,{wordmark_data}" alt="4SAS"></div>'
+            '<h1 class="login-title">OPERAÇÕES</h1>',
+            unsafe_allow_html=True,
+        )
 
     with st.container(key="login-panel", border=True):
         with st.form("portal_login"):
