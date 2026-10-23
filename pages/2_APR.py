@@ -1,15 +1,10 @@
-import importlib
-import gerador_pdf
-
-# Força a atualização do gerador em tempo de execução
-importlib.reload(gerador_pdf)
-
-from gerador_pdf import criar_pdf_apr
 import streamlit as st
 import json
 import datetime
-from gerador_pdf import criar_pdf_apr 
+import copy
+import pandas as pd
 from auth import require_user, render_user_menu
+from gerador_pdf import criar_pdf_apr
 
 current_user = require_user()
 render_user_menu(current_user)
@@ -31,6 +26,22 @@ local = st.sidebar.text_input("Local da Operação")
 st.sidebar.header("2. Seleção de Equipamentos")
 sensores = ["SBES", "MBES", "SSS", "MAG", "SBP", "Sísmica Monocanal", "Sísmica Multicanal", "Vibro Core", "Jet Probe"]
 selecao_sensores = st.sidebar.multiselect("Marque os sensores da OS:", sensores)
+
+st.sidebar.header("3. Controle de Revisão")
+historico_inicial = pd.DataFrame([
+    {
+        "Rev": 0,
+        "Data": data_apr.strftime("%d/%m/%Y"),
+        "Autor": colaborador or "Autor",
+        "Descrição": "Emissão Inicial",
+    }
+])
+historico_df = st.sidebar.data_editor(
+    historico_inicial,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="apr_revision_history",
+)
 
 # Lógica de filtragem
 riscos_filtrados = []
@@ -71,7 +82,23 @@ if os_num and local and colaborador and selecao_sensores:
     st.subheader("Finalizar Documentação")
     if st.button("📄 Gerar Relatório PDF da APR", use_container_width=True):
         with st.spinner("A desenhar matriz de risco em PDF..."):
-            pdf_bytes = criar_pdf_apr(os_num, local, selecao_sensores, riscos_filtrados, colaborador, data_apr.strftime('%d/%m/%Y'))
+            riscos_para_pdf = copy.deepcopy(riscos_filtrados)
+            for risco in riscos_para_pdf:
+                mitigacao = risco.get("mitigacao", {})
+                chave_controle = f"obs_{risco.get('id')}"
+                controle_adicional = st.session_state.get(chave_controle)
+                if not controle_adicional or not str(controle_adicional).strip():
+                    controle_adicional = mitigacao.get("controle_adicional", "N/A")
+                mitigacao["controle_adicional"] = controle_adicional
+            pdf_bytes = criar_pdf_apr(
+                os_num,
+                local,
+                selecao_sensores,
+                riscos_para_pdf,
+                colaborador,
+                data_apr.strftime("%d/%m/%Y"),
+                historico_df.to_dict("records"),
+            )
             st.download_button(label="📥 Baixar PDF Finalizado", data=pdf_bytes, file_name="APR_4SAS.pdf", mime='application/pdf', type="primary")
 else:
     st.info("👈 Preencha todos os dados na barra lateral (Colaborador, Data, OS, Local e Sensores) para carregar os riscos específicos.")
