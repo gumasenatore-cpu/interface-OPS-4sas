@@ -25,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-t.title("Planejador de Linhas")
+st.title("Planejador de Linhas")
 st.markdown("Planejamento automatizado de malhas de levantamento hidrográfico (NORMAM-501).")
 
 # 2. Sidebar - Upload e Parâmetros
