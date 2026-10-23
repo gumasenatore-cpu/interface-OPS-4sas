@@ -3,7 +3,11 @@ import streamlit as st
 from auth import restore_session
 
 
-st.set_page_config(page_title="Portal 4SAS | Operações", page_icon="⚓", layout="wide")
+st.set_page_config(
+    page_title="OPS - 4SAS | Portal",
+    page_icon="assets/logo_4sas.png",
+    layout="wide",
+)
 
 if restore_session():
     pages = {
