@@ -9,7 +9,18 @@ Portal multipágina Streamlit com login Supabase, Boletim, APR e banco de fornec
 3. Use o URL e a chave publishable/anon do mesmo projeto Supabase que contém os usuários do portal.
 4. Execute `streamlit run app.py`.
 
-O cadastro público está desabilitado no portal. Crie os usuários no Supabase Auth e exija confirmação de e-mail conforme a política da organização. Recuperações de senha devem ser feitas pelo administrador no Supabase Auth; o fluxo de callback de recuperação ainda não está habilitado no Streamlit.
+O cadastro público está desabilitado no portal. Para convidar usuários:
+
+1. Em **Authentication > URL Configuration**, configure o **Site URL** como a URL pública do app, sem barra final, e adicione essa mesma URL à lista de Redirect URLs.
+2. Em **Authentication > Email Templates > Invite User**, use este link no botão de convite:
+
+```html
+<a href="{{ .SiteURL }}/?token_hash={{ .TokenHash }}&amp;type=invite">Aceitar convite e definir senha</a>
+```
+
+3. Convide cada pessoa em **Authentication > Users > Invite user**.
+
+Ao abrir o link, o portal valida o convite e apresenta a tela para a pessoa definir a senha. Não habilite cadastro público e nunca coloque uma chave `service_role` nos Secrets do app. Recuperação de senha é um fluxo separado e ainda não está habilitado no Streamlit. O envio de e-mails do Supabase pode exigir SMTP próprio para uso em produção.
 
 ## Banco de fornecedores
 

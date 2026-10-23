@@ -4,6 +4,7 @@ from supabase import Client, create_client
 
 AUTH_SESSION_KEY = "portal_auth_session"
 AUTH_USER_KEY = "portal_authenticated_user"
+AUTH_PENDING_ACTION_KEY = "portal_auth_pending_action"
 
 
 class SupabaseConfigurationError(RuntimeError):
@@ -62,6 +63,18 @@ def sign_in(email: str, password: str) -> dict:
     if not session:
         raise ValueError("Não foi possível iniciar uma sessão para esta conta.")
 
+    user = _response_user(response, client)
+    return _store_session(session, user)
+
+
+def accept_email_invitation(token_hash: str) -> dict:
+    client = create_supabase_client()
+    response = client.auth.verify_otp(
+        {"token_hash": token_hash, "type": "invite"}
+    )
+    session = getattr(response, "session", None)
+    if not session:
+        raise ValueError("O convite não gerou uma sessão válida.")
     user = _response_user(response, client)
     return _store_session(session, user)
 
