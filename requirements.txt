@@ -11,3 +11,5 @@ fpdf2
 folium
 streamlit-folium
 matplotlib
+rasterio
+pyproj

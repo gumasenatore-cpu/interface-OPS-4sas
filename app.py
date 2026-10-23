@@ -92,6 +92,11 @@ if user:
                     title="Fornecedores",
                     icon=":material/local_shipping:",
                 ),
+                st.Page(
+                    "pages/4_Planejador_Linhas.py",
+                    title="Planejador de Linhas",
+                    icon=":material/map:",
+                ),
             ],
         }
 else:
