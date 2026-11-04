@@ -76,7 +76,7 @@ def generate_packing_list_pdf(project_info, df_items):
     story = []
 
     # 1. Cabeçalho
-    story.append(Paragraph(f"4SAS OFFSHORE — MANIFESTO DE CARGA / PACKING LIST", title_style))
+    story.append(Paragraph(f"4SAS — MANIFESTO DE CARGA / PACKING LIST", title_style))
     meta_text = (
         f"<b>Campanha / Projeto:</b> {project_info['project_code']}<br/>"
         f"<b>Cliente:</b> {project_info.get('client_name') or 'N/A'} | "
