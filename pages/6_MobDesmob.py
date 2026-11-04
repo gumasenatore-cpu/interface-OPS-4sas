@@ -1,7 +1,15 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from io import BytesIO
+import requests
 from supabase import create_client, Client
+
+# ReportLab para geração de PDF
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
 # ------------------------------------------------------------------------------
 # CONFIGURAÇÃO DE PÁGINA
@@ -20,11 +28,197 @@ def init_supabase():
 
 supabase: Client = init_supabase()
 
-st.title("📋 Packing List: Mobilização & Desmobilização")
+# ------------------------------------------------------------------------------
+# FUNÇÃO PARA GERAR PDF EXECUTIVO (REPORTLAB)
+# ------------------------------------------------------------------------------
+def generate_packing_list_pdf(project_info, df_items):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor('#0f2b48'),
+        spaceAfter=6
+    )
+    subtitle_style = ParagraphStyle(
+        'DocSub',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=14,
+        textColor=colors.HexColor('#4a5568'),
+        spaceAfter=12
+    )
+    cell_style = ParagraphStyle(
+        'CellText',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=10
+    )
+    cell_bold = ParagraphStyle(
+        'CellBold',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=10,
+        fontName='Helvetica-Bold'
+    )
+
+    story = []
+
+    # 1. Cabeçalho
+    story.append(Paragraph(f"4SAS OFFSHORE — MANIFESTO DE CARGA / PACKING LIST", title_style))
+    meta_text = (
+        f"<b>Campanha / Projeto:</b> {project_info['project_code']}<br/>"
+        f"<b>Cliente:</b> {project_info.get('client_name') or 'N/A'} | "
+        f"<b>Embarcação/Local:</b> {project_info.get('vessel_name') or 'N/A'}<br/>"
+        f"<b>Responsável Técnico:</b> {project_info.get('responsible_user')} | "
+        f"<b>Data de Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    )
+    story.append(Paragraph(meta_text, subtitle_style))
+    story.append(Spacer(1, 10))
+
+    # 2. Resumo de Métricas (Tabela de KPI)
+    total_w = df_items["weight_kg"].sum() if not df_items.empty else 0.0
+    total_v = df_items["declared_value_brl"].sum() if not df_items.empty else 0.0
+    total_i = len(df_items) if not df_items.empty else 0
+    
+    kpi_data = [
+        [
+            Paragraph("<b>Peso Total</b>", cell_bold),
+            Paragraph("<b>Valor Declarado</b>", cell_bold),
+            Paragraph("<b>Total de Itens</b>", cell_bold)
+        ],
+        [
+            Paragraph(f"{total_w:,.2f} kg", cell_style),
+            Paragraph(f"R$ {total_v:,.2f}", cell_style),
+            Paragraph(f"{total_i} itens", cell_style)
+        ]
+    ]
+    kpi_table = Table(kpi_data, colWidths=[180, 180, 180])
+    kpi_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f1f5f9')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(kpi_table)
+    story.append(Spacer(1, 15))
+
+    # 3. Tabela de Itens do Packing List
+    story.append(Paragraph("<b>RELAÇÃO COMPLETA DE EQUIPAMENTOS E CAIXAS</b>", styles['Heading3']))
+    
+    table_data = [
+        [
+            Paragraph("<b>Tag / Identificador</b>", cell_bold),
+            Paragraph("<b>Descrição / Conteúdo</b>", cell_bold),
+            Paragraph("<b>Tipo</b>", cell_bold),
+            Paragraph("<b>Peso (kg)</b>", cell_bold),
+            Paragraph("<b>Valor (R$)</b>", cell_bold),
+            Paragraph("<b>Status Desmob</b>", cell_bold)
+        ]
+    ]
+
+    for _, row in df_items.iterrows():
+        st_map = {"pending": "Pendente", "ok": "OK (Retornou)", "damaged": "Danificado", "lost": "Perdido", "left_on_site": "No Cliente"}
+        table_data.append([
+            Paragraph(str(row["tag_or_serial"]), cell_style),
+            Paragraph(str(row["description"]), cell_style),
+            Paragraph("Caixa" if row["item_type"] == "box" else "Item Solto", cell_style),
+            Paragraph(f"{row['weight_kg']:,.2f}", cell_style),
+            Paragraph(f"R$ {row['declared_value_brl']:,.2f}", cell_style),
+            Paragraph(st_map.get(row["desmob_status"], "Pendente"), cell_style)
+        ])
+
+    items_table = Table(table_data, colWidths=[90, 170, 60, 60, 80, 80])
+    items_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f2b48')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+    ]))
+    story.append(items_table)
+    story.append(Spacer(1, 20))
+
+    # 4. Anexo com Evidências Fotográficas
+    story.append(Paragraph("<b>EVIDÊNCIAS FOTOGRÁFICAS (MOBILIZAÇÃO & DESMOBILIZAÇÃO)</b>", styles['Heading3']))
+    story.append(Spacer(1, 5))
+
+    photo_rows = []
+    for _, row in df_items.iterrows():
+        mob_img_obj = None
+        desmob_img_obj = None
+
+        # Carregar foto MOB
+        if row.get("mob_photo_url"):
+            try:
+                resp = requests.get(row["mob_photo_url"], timeout=4)
+                if resp.status_code == 200:
+                    img_buf = BytesIO(resp.content)
+                    mob_img_obj = RLImage(img_buf, width=120, height=90)
+            except Exception:
+                pass
+
+        # Carregar foto DESMOB
+        if row.get("desmob_photo_url"):
+            try:
+                resp = requests.get(row["desmob_photo_url"], timeout=4)
+                if resp.status_code == 200:
+                    img_buf2 = BytesIO(resp.content)
+                    desmob_img_obj = RLImage(img_buf2, width=120, height=90)
+            except Exception:
+                pass
+
+        if mob_img_obj or desmob_img_obj:
+            info_cell = Paragraph(
+                f"<b>[{row['tag_or_serial']}]</b> {row['description']}<br/>"
+                f"Obs. MOB: {row.get('mob_notes') or 'S/N'}<br/>"
+                f"Obs. DESMOB: {row.get('desmob_notes') or 'S/N'}",
+                cell_style
+            )
+            photo_rows.append([
+                info_cell,
+                mob_img_obj if mob_img_obj else Paragraph("Sem foto MOB", cell_style),
+                desmob_img_obj if desmob_img_obj else Paragraph("Sem foto DESMOB", cell_style)
+            ])
+
+    if photo_rows:
+        photo_table_data = [[Paragraph("<b>Item / Descrição</b>", cell_bold), Paragraph("<b>Foto Mobilização</b>", cell_bold), Paragraph("<b>Foto Desmobilização</b>", cell_bold)]] + photo_rows
+        photo_table = Table(photo_table_data, colWidths=[200, 170, 170])
+        photo_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#e2e8f0')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('ALIGN', (1,1), (-1,-1), 'CENTER'),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        story.append(photo_table)
+    else:
+        story.append(Paragraph("<i>Nenhuma foto registrada para os itens desta campanha.</i>", cell_style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # ------------------------------------------------------------------------------
-# GERENCIAMENTO DE CAMPANHAS / PROJETOS (MOB_PROJECTS)
+# INTERFACE PRINCIPAL
 # ------------------------------------------------------------------------------
+st.title("📋 Packing List: Mobilização & Desmobilização")
+
 st.sidebar.header("📁 Operação / Campanha")
 
 try:
@@ -41,7 +235,6 @@ selected_proj_label = st.sidebar.selectbox(
     options=["-- Criar Nova Campanha --"] + list(project_options.keys())
 )
 
-# Modal / Formulário de Criação de Novo Projeto na Sidebar
 if selected_proj_label == "-- Criar Nova Campanha --":
     st.info("👈 Crie ou selecione uma campanha na barra lateral para iniciar o Packing List.")
     with st.sidebar.form("form_new_project"):
@@ -72,11 +265,9 @@ if selected_proj_label == "-- Criar Nova Campanha --":
                     st.error(f"Erro ao criar campanha: {err}")
     st.stop()
 
-# Acessa o dicionário apenas quando uma campanha existente for selecionada
 current_project = project_options[selected_proj_label]
 proj_id = current_project["id"]
 
-# Botão de Excluir Campanha na Sidebar
 with st.sidebar.expander("⚙️ Gerenciar Campanha Selecionada"):
     st.warning(f"Atenção: Excluir a campanha **{current_project['project_code']}** removerá todos os itens e fotos associadas.")
     if st.button("🗑️ Excluir esta Campanha", type="primary"):
@@ -87,13 +278,9 @@ with st.sidebar.expander("⚙️ Gerenciar Campanha Selecionada"):
         except Exception as e_del:
             st.error(f"Erro ao excluir campanha: {e_del}")
 
-# ------------------------------------------------------------------------------
-# CABEÇALHO DA CAMPANHA E MÉTRICAS DA CARGA (PACKING LIST METRICS)
-# ------------------------------------------------------------------------------
 st.markdown(f"### 🚢 {current_project['project_code']} — {current_project.get('vessel_name', '')}")
 st.caption(f"Cliente: **{current_project.get('client_name', 'N/A')}** | Responsável: **{current_project['responsible_user']}** | Status: **{current_project['status'].upper()}**")
 
-# Carregar itens do Packing List
 try:
     items_res = supabase.table("mob_packing_list_items").select("*").eq("project_id", proj_id).execute()
     items = items_res.data or []
@@ -103,7 +290,6 @@ except Exception as e:
 
 df_items = pd.DataFrame(items) if items else pd.DataFrame()
 
-# Métricas Totais do Packing List
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 total_weight = df_items["weight_kg"].sum() if not df_items.empty else 0.0
 total_val = df_items["declared_value_brl"].sum() if not df_items.empty else 0.0
@@ -117,9 +303,6 @@ col_m4.metric("🔄 Itens Desmobilizados", f"{desmob_count} / {total_count}")
 
 st.divider()
 
-# ------------------------------------------------------------------------------
-# ABAS DE OPERAÇÃO: MOBILIZAÇÃO E DESMOBILIZAÇÃO
-# ------------------------------------------------------------------------------
 tab_mob, tab_desmob, tab_report = st.tabs(["🚀 1. Mobilização (Saída)", "🔍 2. Desmobilização (Retorno)", "📊 3. Resumo & Packing List"])
 
 # ------------------------------------------------------------------------------
@@ -127,8 +310,6 @@ tab_mob, tab_desmob, tab_report = st.tabs(["🚀 1. Mobilização (Saída)", "�
 # ------------------------------------------------------------------------------
 with tab_mob:
     st.subheader("➕ Registrar Item / Caixa no Packing List")
-    
-    # Mapear Caixas PAI existentes no projeto para vínculo
     boxes_dict = {}
     if not df_items.empty:
         boxes = df_items[df_items["item_type"] == "box"]
@@ -162,14 +343,11 @@ with tab_mob:
         if btn_save_item:
             if tag_serial and description:
                 photo_url = None
-                
-                # Upload para Supabase Storage se houver imagem
                 img_to_upload = img_camera or img_file
                 if img_to_upload:
                     try:
                         file_bytes = img_to_upload.getvalue()
                         filename = f"{current_project['project_code']}/{tag_serial}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                        
                         supabase.storage.from_("mob-evidences").upload(filename, file_bytes)
                         photo_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
                     except Exception as err_img:
@@ -191,7 +369,7 @@ with tab_mob:
 
                 try:
                     supabase.table("mob_packing_list_items").insert(payload_item).execute()
-                    st.success(f"Item [{tag_serial}] adicionado com sucesso ao Packing List!")
+                    st.success(f"Item [{tag_serial}] adicionado ao Packing List!")
                     st.rerun()
                 except Exception as e_ins:
                     st.error(f"Erro ao salvar item: {e_ins}")
@@ -199,11 +377,10 @@ with tab_mob:
                 st.warning("Preencha a Tag/Identificador e a Descrição do item.")
 
 # ------------------------------------------------------------------------------
-# TAB 2: DESMOBILIZAÇÃO (CONFRONTO LADO A LADO)
+# TAB 2: DESMOBILIZAÇÃO
 # ------------------------------------------------------------------------------
 with tab_desmob:
     st.subheader("🔍 Conferência e Check-out de Retorno (Desmobilização)")
-    
     if df_items.empty:
         st.info("Nenhum item cadastrado na mobilização para ser conferido.")
     else:
@@ -261,21 +438,43 @@ with tab_desmob:
                             st.rerun()
 
 # ------------------------------------------------------------------------------
-# TAB 3: RESUMO DA CARGA & EXPORTAÇÃO DE PACKING LIST
+# TAB 3: RESUMO & EXPORTAÇÃO
 # ------------------------------------------------------------------------------
 with tab_report:
-    st.subheader("📊 Tabela Consolidada do Packing List")
+    st.subheader("📊 Relatórios Executivos do Packing List")
     if not df_items.empty:
+        col_exp1, col_exp2 = st.columns(2)
+        
+        # Botão PDF Executivo com Fotos
+        with col_exp1:
+            st.markdown("##### 📄 Exportar Relatório em PDF Executivo")
+            st.caption("Gera um documento PDF oficial formatado com o logotipo 4SAS, resumo de carga e anexo fotográfico.")
+            try:
+                pdf_data = generate_packing_list_pdf(current_project, df_items)
+                st.download_button(
+                    label="📄 Baixar Packing List Executivo (PDF)",
+                    data=pdf_data,
+                    file_name=f"packing_list_{current_project['project_code']}.pdf",
+                    mime="application/pdf",
+                    type="primary"
+                )
+            except Exception as e_pdf:
+                st.error(f"Erro ao gerar PDF: {e_pdf}")
+
+        # Botão CSV/Excel
+        with col_exp2:
+            st.markdown("##### 📊 Exportar Dados em Planilha (CSV)")
+            st.caption("Exporta a tabela bruta dos itens para auditoria em planilhas.")
+            csv = df_items.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="💾 Baixar Tabela de Dados (CSV)",
+                data=csv,
+                file_name=f"packing_list_{current_project['project_code']}.csv",
+                mime="text/csv"
+            )
+
+        st.divider()
         display_cols = ["tag_or_serial", "description", "item_type", "weight_kg", "declared_value_brl", "desmob_status", "mob_notes", "desmob_notes"]
         st.dataframe(df_items[display_cols], use_container_width=True)
-        
-        # Download rápido em CSV para manifesto de carga
-        csv = df_items.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="💾 Baixar Manifest / Packing List (CSV)",
-            data=csv,
-            file_name=f"packing_list_{current_project['project_code']}.csv",
-            mime="text/csv"
-        )
     else:
         st.info("Nenhum item cadastrado para esta campanha.")
