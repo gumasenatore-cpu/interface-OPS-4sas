@@ -97,6 +97,11 @@ if user:
                     title="Planejador de Linhas",
                     icon=":material/map:",
                 ),
+                st.Page(
+                    "pages/5_Inventario.py",
+                    title="Inventário & Manutenção",
+                    icon=":material/inventory_2:",
+                ),
             ],
         }
 else:
