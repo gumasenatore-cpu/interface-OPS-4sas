@@ -102,6 +102,11 @@ if user:
                     title="Inventário & Manutenção",
                     icon=":material/inventory_2:",
                 ),
+                st.Page(
+                    "pages/6_MobDesmob.py",
+                    title="Checklist Mob/Desmob",
+                    icon=":material/fact_check:",
+                ),
             ],
         }
 else:
