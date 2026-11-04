@@ -27,8 +27,8 @@ render_user_menu(current_user)
 st.markdown("""
 <style>
     .stAlert {
-        border-radius: 4px;
-        border-left: 4px solid #F32735;
+        border-radius: 6px;
+        border-left: 5px solid #F32735;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -121,6 +121,13 @@ def graus_para_direcao(deg):
     direcoes = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
     val = int((deg / 22.5) + 0.5)
     return direcoes[val % 16]
+
+def graus_para_seta(deg):
+    if pd.isna(deg): return ""
+    # Setas Unicode correspondentes às direções
+    setas = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"]
+    idx = int((deg + 22.5) // 45) % 8
+    return setas[idx]
 
 @st.cache_data
 def carregar_dados_multimodelo(lat_val, lon_val):
@@ -261,19 +268,39 @@ corrente_txt_limite = f" | Corrente <= {limite_corrente_ativo} kn" if limite_cor
 st.markdown(f'<p class="sub-title"><b>Local:</b> {nome_local_exibicao} | <b>Previsão:</b> {dias_janela} dias{sub_str}<br><b>Equipamentos:</b> {", ".join(equipamentos_selecionados) if equipamentos_selecionados else "Nenhum"}<br><b>Limiar Consenso:</b> Onda <= {limite_onda_ativo} m | Vento <= {limite_vento_ativo} kn{corrente_txt_limite}</p>', unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("### Sumário Executivo da Janela")
 
-col_donut, col_timeline = st.columns([1, 1.8])
+# ==============================================================================
+# SUMÁRIO EXECUTIVO DA JANELA (DESIGN MODERNO E EXECUTIVO)
+# ==============================================================================
+st.markdown("### 📊 Sumário Executivo da Janela Operacional")
 
-with col_donut:
+col_kpi, col_timeline = st.columns([1, 2.2])
+
+with col_kpi:
     if total_horas > 0:
-        labels_status = ['FAVORAVEL', 'AVALIACAO TECNICA', 'SEM OPERACAO']
-        values_status = [favoraveis, tecnicas, nogo]
-        color_map = {'FAVORAVEL':'#2E7D32', 'AVALIACAO TECNICA':'#E5E1E6', 'SEM OPERACAO':'#F32735'} # COR CINZA MANTIDA
-        fig_donut = px.pie(names=labels_status, values=values_status, hole=0.65, color=labels_status, color_discrete_map=color_map)
-        fig_donut.update_traces(textposition='inside', textinfo='percent', hoverinfo='label+value')
-        fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=True, height=220, legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.05))
-        st.plotly_chart(fig_donut, use_container_width=True)
+        pct_fav = (favoraveis / total_horas) * 100
+        status_geral_badge = "FAVORÁVEL" if nogo == 0 and tecnicas == 0 else ("ATENÇÃO" if nogo == 0 else "CRÍTICO")
+        bg_status = "#10b981" if status_geral_badge == "FAVORÁVEL" else ("#f59e0b" if status_geral_badge == "ATENÇÃO" else "#ef4444")
+
+        st.metric(
+            label="Janela Operável",
+            value=f"{pct_fav:.0f}%",
+            delta=f"{favoraveis}h de {total_horas}h favoráveis"
+        )
+        
+        st.markdown(
+            f"""
+            <div style="background-color: rgba(15, 23, 42, 0.4); padding: 12px; border-radius: 8px; border-left: 4px solid {bg_status}; margin-top: 10px;">
+                <span style="background-color: {bg_status}; color: #ffffff; font-weight: bold; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem;">
+                    {status_geral_badge}
+                </span>
+                <p style="margin-top: 6px; margin-bottom: 0px; font-size: 0.82rem; color: #cbd5e1;">
+                    🟢 <b>Favorável:</b> {favoraveis}h | 🟡 <b>Atenção:</b> {tecnicas}h | 🔴 <b>Bloqueio:</b> {nogo}h
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 with col_timeline:
     if total_horas > 0:
@@ -288,9 +315,9 @@ with col_timeline:
             text_data.append(text_row)
             
         colorscale = [
-            [0.0, '#2E7D32'], [0.333, '#2E7D32'],
-            [0.333, '#E5E1E6'], [0.666, '#E5E1E6'], # COR CINZA MANTIDA
-            [0.666, '#F32735'], [1.0, '#F32735']
+            [0.0, '#10b981'], [0.333, '#10b981'],
+            [0.333, '#f59e0b'], [0.666, '#f59e0b'],
+            [0.666, '#ef4444'], [1.0, '#ef4444']
         ]
         
         fig_timeline = go.Figure(data=go.Heatmap(
@@ -300,17 +327,19 @@ with col_timeline:
             colorscale=colorscale,
             zmin=0, zmax=2,
             showscale=False,
-            xgap=2, ygap=2,
+            xgap=3, ygap=3,
             text=text_data,
             hovertemplate='Dia: %{y}<br>Hora: %{x}<br>Status: %{text}<extra></extra>'
         ))
         
         fig_timeline.update_layout(
-            title=dict(text="Matriz Operacional de Janela", font=dict(size=14)),
-            xaxis=dict(tickangle=-45),
-            yaxis=dict(autorange='reversed'),
-            height=220,
-            margin=dict(t=40, b=10, l=10, r=10)
+            title=dict(text="<b>Matriz Operacional de Janela (Horas)</b>", font=dict(size=13, color="#f8fafc")),
+            xaxis=dict(tickangle=-45, showgrid=False, tickfont=dict(size=10)),
+            yaxis=dict(autorange='reversed', showgrid=False, tickfont=dict(size=11)),
+            height=210,
+            margin=dict(t=35, b=10, l=10, r=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
         st.plotly_chart(fig_timeline, use_container_width=True)
 
@@ -322,8 +351,6 @@ elif not horas_atencao.empty: st.warning(f"**CONDIÇÃO LIMÍTROFE** - Identific
 else: st.success("**CONDIÇÃO FAVORÁVEL** - Janela inteiramente operável dentro dos limiares estabelecidos.")
 
 st.info("**AVISOS AOS NAVEGANTES (AVGN) - DHN** - Consulta obrigatória antes de zarpar: [Portal Oficial DHN](https://www.marinha.mil.br/chm/dados-do-segnav-aviso-aos-navegantes-tela).")
-
-st.markdown("---")
 
 with st.expander("Diretrizes Operacionais e Limites de Equipamentos"):
     st.markdown("""
@@ -359,7 +386,7 @@ with st.expander("Fontes de Dados, Modelos Numéricos Globais e Credibilidade T�
     * **Correntes em Canais e Barras:** Derivadas dinamicamente via taxa de variação temporal do nível da maré ($\Delta h / \Delta t$) em nós (kn).
     """)
 
-# EXPORTAÇÃO PDF BLINDADA CONTRA NONE
+# EXPORTAÇÃO PDF
 st.markdown("---")
 st.subheader("Exportação do Relatório Executivo")
 
@@ -414,24 +441,91 @@ df_exibicao['Avisos'] = df['Avisos']
 
 st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
+# ==============================================================================
+# GRÁFICOS DE PREVISÃO ELEGANTES COM SETAS DE DIREÇÃO (SWELL E VENTO)
+# ==============================================================================
 st.subheader("Comparação de Modelos Numéricos de Onda (Consenso vs ECMWF Waves vs WaveWatch III)")
-fig_onda_comp = px.line(df, x='Data_Hora', y=['Onda_Consenso(m)', 'Onda_ECMWF(m)', 'Onda_WW3(m)'], labels={'value': 'Altura da Onda (m)', 'Data_Hora': 'Horário', 'variable': 'Modelo Numérico'})
-fig_onda_comp.update_traces(line_shape='spline', line_width=2)
-fig_onda_comp.data[0].update(line_width=3.5, line_color='#F32735')
+
+fig_onda_comp = go.Figure()
+
+# Linhas dos Modelos
+fig_onda_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Onda_ECMWF(m)'], name='ECMWF Waves', mode='lines', line=dict(color='#94a3b8', width=1.5, dash='dot')))
+fig_onda_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Onda_WW3(m)'], name='WaveWatch III', mode='lines', line=dict(color='#38bdf8', width=1.5, dash='dash')))
+fig_onda_comp.add_trace(go.Scatter(
+    x=df['Data_Hora'], y=df['Onda_Consenso(m)'], 
+    name='Onda Consenso (m)', mode='lines', 
+    line=dict(color='#0284c7', width=3.5, shape='spline'),
+    fill='tozeroy', fillcolor='rgba(2, 132, 199, 0.08)'
+))
+
+# Anotações de Direção do Swell a cada 3 horas sobre a curva de consenso
+df_arrows_wave = df.iloc[::3]
+for _, r in df_arrows_wave.iterrows():
+    seta = graus_para_seta(r['Onda_Dir_Num'])
+    fig_onda_comp.add_annotation(
+        x=r['Data_Hora'], y=r['Onda_Consenso(m)'],
+        text=f"<b>{seta}</b><br>{r['Onda_Dir_Num']:.0f}°",
+        showarrow=True, arrowhead=0, ax=0, ay=-22,
+        font=dict(size=10, color='#38bdf8'),
+        arrowcolor='rgba(56, 189, 248, 0.3)'
+    )
+
+fig_onda_comp.update_layout(
+    xaxis=dict(title="Horário", showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+    yaxis=dict(title="Altura da Onda (m)", showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+    height=340, margin=dict(t=30, b=10, l=10, r=10),
+    legend=dict(orientation="h", y=1.12, x=0),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15, 23, 42, 0.3)"
+)
 st.plotly_chart(fig_onda_comp, use_container_width=True, key="grafico_onda_comparacao")
 
+
 st.subheader("Comparação de Modelos Numéricos de Vento (em Nós)")
-fig_vento_comp = px.line(df, x='Data_Hora', y=['Vento_Consenso_Nos', 'Vento_ECMWF_Nos', 'Vento_GFS_Nos', 'Vento_ICON_Nos'], labels={'value': 'Velocidade (kn)', 'Data_Hora': 'Horário', 'variable': 'Modelo'})
-fig_vento_comp.update_traces(line_shape='spline', line_width=2)
-fig_vento_comp.data[0].update(line_width=3.5, line_color='#F32735')
-fig_vento_comp.data[3].update(line_color='#FFD700')
+
+fig_vento_comp = go.Figure()
+
+# Linhas dos Modelos
+fig_vento_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Vento_ECMWF_Nos'], name='ECMWF IFS', mode='lines', line=dict(color='#94a3b8', width=1.5, dash='dot')))
+fig_vento_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Vento_GFS_Nos'], name='GFS NOAA', mode='lines', line=dict(color='#cbd5e1', width=1.5, dash='dash')))
+fig_vento_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Vento_ICON_Nos'], name='ICON DWD', mode='lines', line=dict(color='#fef08a', width=1.5, dash='dash')))
+fig_vento_comp.add_trace(go.Scatter(
+    x=df['Data_Hora'], y=df['Vento_Consenso_Nos'], 
+    name='Vento Consenso (kn)', mode='lines', 
+    line=dict(color='#d97706', width=3.5, shape='spline'),
+    fill='tozeroy', fillcolor='rgba(217, 119, 6, 0.08)'
+))
+
+# Anotações de Direção do Vento a cada 3 horas sobre a curva de consenso
+df_arrows_wind = df.iloc[::3]
+for _, r in df_arrows_wind.iterrows():
+    seta = graus_para_seta(r['Vento_Dir_Num'])
+    fig_vento_comp.add_annotation(
+        x=r['Data_Hora'], y=r['Vento_Consenso_Nos'],
+        text=f"<b>{seta}</b><br>{r['Vento_Dir_Num']:.0f}°",
+        showarrow=True, arrowhead=0, ax=0, ay=-22,
+        font=dict(size=10, color='#f59e0b'),
+        arrowcolor='rgba(245, 158, 11, 0.3)'
+    )
+
+fig_vento_comp.update_layout(
+    xaxis=dict(title="Horário", showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+    yaxis=dict(title="Velocidade (kn)", showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+    height=340, margin=dict(t=30, b=10, l=10, r=10),
+    legend=dict(orientation="h", y=1.12, x=0),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15, 23, 42, 0.3)"
+)
 st.plotly_chart(fig_vento_comp, use_container_width=True, key="grafico_vento_comparacao")
+
 
 st.subheader("Análise Temporal de Correntes Estuarinas e Maré")
 fig_corrente = px.line(df, x='Data_Hora', y=['Mare_Altura(m)', 'Corrente_Vel_Nos'], labels={'value': 'Intensidade / Nível', 'Data_Hora': 'Horário', 'variable': 'Parâmetro'})
 fig_corrente.update_traces(line_shape='spline', line_width=3)
 fig_corrente.data[0].update(name="Nível da Maré (m)") 
 fig_corrente.data[1].update(name="Velocidade da Corrente (kn)")
+fig_corrente.update_layout(
+    height=300, margin=dict(t=20, b=10, l=10, r=10),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15, 23, 42, 0.3)"
+)
 st.plotly_chart(fig_corrente, use_container_width=True, key="grafico_temporal_correntes")
 
 st.markdown("---")
