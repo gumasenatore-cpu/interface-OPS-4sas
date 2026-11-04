@@ -14,4 +14,5 @@ matplotlib
 rasterio
 pyproj
 shapely
+qrcode>=7.4.2
 # forcar rebuild do servidor
