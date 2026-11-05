@@ -140,7 +140,6 @@ def gerar_pdf_boletim_reportlab(dataframe, local_nome, dias_janela, favoraveis, 
 
     styles = getSampleStyleSheet()
 
-    # Estilo do Título Principal (Sem fundo, fonte vermelha)
     title_style = ParagraphStyle(
         'DocTitleClean',
         parent=styles['Heading1'],
@@ -268,19 +267,15 @@ def gerar_pdf_boletim_reportlab(dataframe, local_nome, dias_janela, favoraveis, 
     plt.close(fig_tl)
     buf_timeline.seek(0)
 
-    # Posicionamento Lado a Lado: Donut + Kanban
     t_row_graphics = Table([[RLImage(buf_donut, width=205, height=125), RLImage(buf_timeline, width=310, height=125)]], colWidths=[210, 313])
     t_row_graphics.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
     story.append(t_row_graphics)
 
-    # ---------------------------------------------------------
-    # PÁGINA 2: Gráficos de Tendência Temporal dos Modelos
-    # ---------------------------------------------------------
+    # Página 2: Gráficos
     story.append(PageBreak())
     story.append(Paragraph("<b>Análise Comparativa de Modelos Numéricos</b>", section_style))
     story.append(Spacer(1, 4))
 
-    # Gráfico 1: Onda
     fig, ax = plt.subplots(figsize=(7.2, 2.1), dpi=200)
     ax.plot(dataframe['Data_Hora'], dataframe['Onda_ECMWF(m)'], label='ECMWF', color='#1f77b4', linewidth=1)
     ax.plot(dataframe['Data_Hora'], dataframe['Onda_WW3(m)'], label='WW3', color='#e377c2', linewidth=1)
@@ -297,7 +292,6 @@ def gerar_pdf_boletim_reportlab(dataframe, local_nome, dias_janela, favoraveis, 
     plt.close(fig)
     buf_onda.seek(0)
 
-    # Gráfico 2: Vento
     fig, ax = plt.subplots(figsize=(7.2, 2.1), dpi=200)
     ax.plot(dataframe['Data_Hora'], dataframe['Vento_ECMWF_Nos'], label='ECMWF', color='#1f77b4', linewidth=1)
     ax.plot(dataframe['Data_Hora'], dataframe['Vento_GFS_Nos'], label='GFS', color='#2ca02c', linewidth=1)
@@ -315,7 +309,6 @@ def gerar_pdf_boletim_reportlab(dataframe, local_nome, dias_janela, favoraveis, 
     plt.close(fig)
     buf_vento.seek(0)
 
-    # Gráfico 3: Maré e Correntes
     fig, ax = plt.subplots(figsize=(7.2, 1.9), dpi=200)
     ax.plot(dataframe['Data_Hora'], dataframe['Mare_Altura(m)'], label='Nível Maré (m)', color='#00838F', linewidth=1.8)
     ax.plot(dataframe['Data_Hora'], dataframe['Corrente_Vel_Nos'], label='Corrente (kn)', color='#2C3E50', linewidth=1.5, linestyle='-.')
@@ -336,9 +329,7 @@ def gerar_pdf_boletim_reportlab(dataframe, local_nome, dias_janela, favoraveis, 
     story.append(Spacer(1, 4))
     story.append(RLImage(buf_corr, width=523, height=125))
 
-    # ---------------------------------------------------------
-    # PÁGINA 3: Tabela de Dados Tabulares Operacionais
-    # ---------------------------------------------------------
+    # Página 3: Tabela
     story.append(PageBreak())
     story.append(Paragraph("<b>Tabela Detalhada de Dados Operacionais</b>", section_style))
     story.append(Spacer(1, 4))
