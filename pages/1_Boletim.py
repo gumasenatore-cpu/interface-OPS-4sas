@@ -11,6 +11,7 @@ import tempfile
 import os
 import folium
 from streamlit_folium import st_folium
+from concurrent.futures import ThreadPoolExecutor
 
 import matplotlib
 matplotlib.use('Agg')
@@ -124,28 +125,42 @@ def graus_para_direcao(deg):
 
 def graus_para_seta(deg):
     if pd.isna(deg): return ""
-    # Setas Unicode correspondentes às direções
     setas = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"]
     idx = int((deg + 22.5) // 45) % 8
     return setas[idx]
 
-@st.cache_data
+# ------------------------------------------------------------------------------
+# FUNÇÃO CARREGAR DADOS COM THREADS PARALELAS E CACHE EXPIRÁVEL (OTIMIZADA)
+# ------------------------------------------------------------------------------
+@st.cache_data(ttl=1800, show_spinner="Carregando modelos meteooceanográficos...")
 def carregar_dados_multimodelo(lat_val, lon_val):
-    url_mar_oficial = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat_val}&longitude={lon_val}&hourly=wave_height,wave_direction,wave_period&forecast_days=12&timezone=America%2FSao_Paulo"
-    url_mar_ww3 = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat_val}&longitude={lon_val}&hourly=wave_height,wave_direction,wave_period&models=best_match&forecast_days=12&timezone=America%2FSao_Paulo"
-    url_vento_ecmwf = f"https://api.open-meteo.com/v1/forecast?latitude={lat_val}&longitude={lon_val}&hourly=wind_speed_10m,wind_direction_10m&models=ecmwf_ifs025&wind_speed_unit=kn&timezone=America%2FSao_Paulo"
-    url_vento_gfs = f"https://api.open-meteo.com/v1/forecast?latitude={lat_val}&longitude={lon_val}&hourly=wind_speed_10m,wind_direction_10m&models=gfs_seamless&wind_speed_unit=kn&timezone=America%2FSao_Paulo"
-    url_vento_icon = f"https://api.open-meteo.com/v1/forecast?latitude={lat_val}&longitude={lon_val}&hourly=wind_speed_10m,wind_direction_10m&models=icon_seamless&wind_speed_unit=kn&timezone=America%2FSao_Paulo"
+    urls = {
+        'mar_oficial': f"https://marine-api.open-meteo.com/v1/marine?latitude={lat_val}&longitude={lon_val}&hourly=wave_height,wave_direction,wave_period&forecast_days=12&timezone=America%2FSao_Paulo",
+        'mar_ww3': f"https://marine-api.open-meteo.com/v1/marine?latitude={lat_val}&longitude={lon_val}&hourly=wave_height,wave_direction,wave_period&models=best_match&forecast_days=12&timezone=America%2FSao_Paulo",
+        'v_ecmwf': f"https://api.open-meteo.com/v1/forecast?latitude={lat_val}&longitude={lon_val}&hourly=wind_speed_10m,wind_direction_10m&models=ecmwf_ifs025&wind_speed_unit=kn&timezone=America%2FSao_Paulo",
+        'v_gfs': f"https://api.open-meteo.com/v1/forecast?latitude={lat_val}&longitude={lon_val}&hourly=wind_speed_10m,wind_direction_10m&models=gfs_seamless&wind_speed_unit=kn&timezone=America%2FSao_Paulo",
+        'v_icon': f"https://api.open-meteo.com/v1/forecast?latitude={lat_val}&longitude={lon_val}&hourly=wind_speed_10m,wind_direction_10m&models=icon_seamless&wind_speed_unit=kn&timezone=America%2FSao_Paulo"
+    }
 
-    def fetch_json(url):
+    def fetch_single(item):
+        key, url = item
         try:
-            r = requests.get(url, timeout=6)
-            if r.status_code == 200: return r.json()
-        except Exception: pass
-        return {}
+            r = requests.get(url, timeout=2.5)
+            if r.status_code == 200:
+                return key, r.json()
+        except Exception:
+            pass
+        return key, {}
 
-    j_mar_oficial, j_mar_ww3 = fetch_json(url_mar_oficial), fetch_json(url_mar_ww3)
-    j_v_ecmwf, j_v_gfs, j_v_icon = fetch_json(url_vento_ecmwf), fetch_json(url_vento_gfs), fetch_json(url_vento_icon)
+    # Dispara as 5 requisições de forma simultânea (paralela)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = dict(executor.map(fetch_single, urls.items()))
+
+    j_mar_oficial = results.get('mar_oficial', {})
+    j_mar_ww3 = results.get('mar_ww3', {})
+    j_v_ecmwf = results.get('v_ecmwf', {})
+    j_v_gfs = results.get('v_gfs', {})
+    j_v_icon = results.get('v_icon', {})
 
     if 'hourly' in j_mar_oficial and 'time' in j_mar_oficial['hourly']: datas = pd.to_datetime(j_mar_oficial['hourly']['time'])
     elif 'hourly' in j_v_ecmwf and 'time' in j_v_ecmwf['hourly']: datas = pd.to_datetime(j_v_ecmwf['hourly']['time'])
@@ -448,7 +463,6 @@ st.subheader("Comparação de Modelos Numéricos de Onda (Consenso vs ECMWF Wave
 
 fig_onda_comp = go.Figure()
 
-# Linhas dos Modelos
 fig_onda_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Onda_ECMWF(m)'], name='ECMWF Waves', mode='lines', line=dict(color='#94a3b8', width=1.5, dash='dot')))
 fig_onda_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Onda_WW3(m)'], name='WaveWatch III', mode='lines', line=dict(color='#38bdf8', width=1.5, dash='dash')))
 fig_onda_comp.add_trace(go.Scatter(
@@ -458,7 +472,6 @@ fig_onda_comp.add_trace(go.Scatter(
     fill='tozeroy', fillcolor='rgba(2, 132, 199, 0.08)'
 ))
 
-# Anotações de Direção do Swell a cada 3 horas sobre a curva de consenso
 df_arrows_wave = df.iloc[::3]
 for _, r in df_arrows_wave.iterrows():
     seta = graus_para_seta(r['Onda_Dir_Num'])
@@ -484,7 +497,6 @@ st.subheader("Comparação de Modelos Numéricos de Vento (em Nós)")
 
 fig_vento_comp = go.Figure()
 
-# Linhas dos Modelos
 fig_vento_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Vento_ECMWF_Nos'], name='ECMWF IFS', mode='lines', line=dict(color='#94a3b8', width=1.5, dash='dot')))
 fig_vento_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Vento_GFS_Nos'], name='GFS NOAA', mode='lines', line=dict(color='#cbd5e1', width=1.5, dash='dash')))
 fig_vento_comp.add_trace(go.Scatter(x=df['Data_Hora'], y=df['Vento_ICON_Nos'], name='ICON DWD', mode='lines', line=dict(color='#fef08a', width=1.5, dash='dash')))
@@ -495,7 +507,6 @@ fig_vento_comp.add_trace(go.Scatter(
     fill='tozeroy', fillcolor='rgba(217, 119, 6, 0.08)'
 ))
 
-# Anotações de Direção do Vento a cada 3 horas sobre a curva de consenso
 df_arrows_wind = df.iloc[::3]
 for _, r in df_arrows_wind.iterrows():
     seta = graus_para_seta(r['Vento_Dir_Num'])
