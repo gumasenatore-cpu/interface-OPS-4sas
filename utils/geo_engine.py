@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from shapely.geometry import shape, Polygon, LineString
 from shapely.affinity import rotate
+from shapely.ops import transform
 
 def get_geotiff_overlay_data(file_bytes):
     """
@@ -117,14 +118,17 @@ def generate_survey_lines(polygon_geojson, azimuth, spacing_m, tie_line_spacing_
     transformer_to_utm = pyproj.Transformer.from_crs("EPSG:4326", f"EPSG:{utm_epsg}", always_xy=True)
     transformer_to_wgs = pyproj.Transformer.from_crs(f"EPSG:{utm_epsg}", "EPSG:4326", always_xy=True)
     
-    utm_coords = [transformer_to_utm.transform(x, y) for x, y in poly_geom.exterior.coords]
-    utm_poly = Polygon(utm_coords)
+    # Transformação de coordenadas preservando anéis internos (ilhas/buracos)
+    utm_poly = transform(transformer_to_utm.transform, poly_geom)
     utm_centroid = utm_poly.centroid
     
     lines_output = []
     
-    def _create_grid(angle_deg, step_m, prefix):
-        rotated_poly = rotate(utm_poly, -angle_deg, origin=utm_centroid)
+    def _create_grid(nav_azimuth_deg, step_m, prefix):
+        # Conversão de Azimute de Navegação (Norte=0°, Horário) para Ângulo Cartesiano Shapely (Leste=0°, Anti-horário)
+        cartesian_angle = 90.0 - nav_azimuth_deg
+        
+        rotated_poly = rotate(utm_poly, -cartesian_angle, origin=utm_centroid)
         minx, miny, maxx, maxy = rotated_poly.bounds
         
         y_coords = []
@@ -135,8 +139,9 @@ def generate_survey_lines(polygon_geojson, azimuth, spacing_m, tie_line_spacing_
             
         line_num = 1
         for y in y_coords:
-            raw_line = LineString([(minx - 2000, y), (maxx + 2000, y)])
-            unrotated_line = rotate(raw_line, angle_deg, origin=utm_centroid)
+            # Extensão ampla para garantir a intersecção total no polígono
+            raw_line = LineString([(minx - 5000, y), (maxx + 5000, y)])
+            unrotated_line = rotate(raw_line, cartesian_angle, origin=utm_centroid)
             clipped = utm_poly.intersection(unrotated_line)
             
             if clipped.is_empty:
@@ -152,8 +157,8 @@ def generate_survey_lines(polygon_geojson, azimuth, spacing_m, tie_line_spacing_
                     line_name = f"{prefix}{line_num:03d}"
                     lines_output.append({
                         "id": line_name,
-                        "type": "Principal (SSS/Bat)" if prefix == "L" else "Amarração (SBP)",
-                        "azimuth": angle_deg % 360,
+                        "type": "Principal (SSS/Bat)" if prefix == "L" else "Amarração / Crossline",
+                        "azimuth": nav_azimuth_deg % 360,
                         "length_m": length_m,
                         "coords_wgs84": [[lat, lon] for lon, lat in wgs_coords],
                         "coords_xy": list(g.coords)
@@ -163,7 +168,7 @@ def generate_survey_lines(polygon_geojson, azimuth, spacing_m, tie_line_spacing_
     # 1. Linhas Principais
     _create_grid(azimuth, spacing_m, "L")
     
-    # 2. Transversais de Amarração (SBP)
+    # 2. Transversais / Crosslines de Amarração
     if tie_line_spacing_m and tie_line_spacing_m > 0:
         _create_grid(azimuth + 90, tie_line_spacing_m, "T")
         
