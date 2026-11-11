@@ -85,6 +85,8 @@ def edit_item_dialog(item, df_items, current_project):
         for _, sb in sub_boxes.iterrows():
             sub_boxes_dict[f"📦 [SUB-CAIXA] {sb['tag_or_serial']} - {sb['description']}"] = sb["id"]
 
+    new_img_mob = st.file_uploader("📷 Atualizar Foto MOB", type=["jpg", "png", "jpeg"], key=f"edit_mob_photo_{item['id']}")
+
     with st.form("form_edit_item_dialog"):
         new_tag = st.text_input("Tag / Identificador", value=item.get("tag_or_serial", ""))
         
@@ -137,9 +139,6 @@ def edit_item_dialog(item, df_items, current_project):
         new_mob_notes = st.text_area("Obs. Mobilização (Saída)", value=item.get("mob_notes") or "")
         new_desmob_notes = st.text_area("Obs. Desmobilização (Retorno)", value=item.get("desmob_notes") or "")
 
-        st.write("📷 **Atualizar Foto de Mobilização (Opcional)**")
-        new_img_mob = st.file_uploader("Carregar/Substituir foto MOB", type=["jpg", "png", "jpeg"], key=f"edit_mob_photo_{item['id']}")
-
         btn_save_edit = st.form_submit_button("💾 Salvar Alterações", type="primary")
 
         if btn_save_edit:
@@ -153,7 +152,7 @@ def edit_item_dialog(item, df_items, current_project):
                         supabase.storage.from_("mob-evidences").upload(filename, file_bytes, file_options={"upsert": "true", "content-type": "image/jpeg"})
                         mob_photo_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
                     except Exception as err_img:
-                        st.warning(f"Item atualizado, mas falhou ao subir nova foto: {err_img}")
+                        st.error(f"Erro ao subir imagem no Storage: {err_img}")
 
                 upd_payload = {
                     "tag_or_serial": new_tag.strip(),
@@ -316,7 +315,7 @@ def generate_packing_list_pdf(project_info, df_items):
 
         if row.get("mob_photo_url"):
             try:
-                resp = requests.get(row["mob_photo_url"], timeout=3)
+                resp = requests.get(row["mob_photo_url"], timeout=4)
                 if resp.status_code == 200:
                     mob_img_obj = RLImage(BytesIO(resp.content), width=100, height=75)
             except Exception:
@@ -324,7 +323,7 @@ def generate_packing_list_pdf(project_info, df_items):
 
         if row.get("desmob_photo_url"):
             try:
-                resp2 = requests.get(row["desmob_photo_url"], timeout=3)
+                resp2 = requests.get(row["desmob_photo_url"], timeout=4)
                 if resp2.status_code == 200:
                     desmob_img_obj = RLImage(BytesIO(resp2.content), width=100, height=75)
             except Exception:
@@ -420,20 +419,16 @@ if selected_proj_label == "-- Criar Nova Campanha --":
 current_project = project_options[selected_proj_label]
 proj_id = current_project["id"]
 
-# --- BLOCO RESTAURADO: GERENCIAMENTO E EXCLUSÃO DA CAMPANHA NA BARRA LATERAL ---
 with st.sidebar.expander("⚙️ Gerenciar Campanha Selecionada"):
-    st.warning(f"Atenção: Excluir a campanha **{current_project['project_code']}** removerá todos os itens e registros vinculados a ela.")
+    st.warning(f"Atenção: Excluir a campanha **{current_project['project_code']}** removerá todos os itens e registros vinculados.")
     if st.button("🗑️ Excluir esta Campanha", type="primary"):
         try:
-            # Exclusão em cascata: limpa os itens da campanha primeiro
             supabase.table("mob_packing_list_items").delete().eq("project_id", proj_id).execute()
-            # Exclui o projeto principal
             supabase.table("mob_projects").delete().eq("id", proj_id).execute()
             st.success("Campanha excluída com sucesso!")
             st.rerun()
         except Exception as e_del_proj:
             st.error(f"Erro ao excluir campanha: {e_del_proj}")
-# -------------------------------------------------------------------------------
 
 st.markdown(f"### 🚢 {current_project['project_code']} — {current_project.get('vessel_name', '')}")
 st.caption(f"Cliente: **{current_project.get('client_name', 'N/A')}** | Responsável: **{current_project.get('responsible_user', 'N/A')}**")
@@ -510,6 +505,11 @@ with tab_mob:
         selected_c = st.selectbox("🔗 Pertence a qual Caixa Pai ou Sub-caixa?", list(all_container_options.keys()))
         parent_id = all_container_options[selected_c]
 
+    # --- UPLOAD FORA DO FORM (PERSISTÊNCIA GARANTIDA) ---
+    st.write("📷 **Foto de Mobilização (Saída Galpão)**")
+    img_file = st.file_uploader("Carregar foto do item (JPG, PNG)", type=["jpg", "png", "jpeg"], key="mob_upload_native_outside")
+    # ----------------------------------------------------
+
     with st.form("form_mob_item_hierarchical", clear_on_submit=True):
         col_h1, col_h2 = st.columns(2)
         
@@ -522,23 +522,25 @@ with tab_mob:
             value_brl = st.number_input("Valor Declarado (R$)", min_value=0.0, step=100.0, value=0.0)
             mob_notes = st.text_area("Observações de Despacho", placeholder="Estado físico na saída do galpão...")
 
-        st.write("📷 **Foto de Mobilização (Saída Galpão)**")
-        img_file = st.file_uploader("Carregar foto (JPG, PNG)", type=["jpg", "png", "jpeg"], key="mob_upload_native")
-
         btn_save_item = st.form_submit_button("💾 Cadastrar e Despachar Item", type="primary")
 
         if btn_save_item:
             if tag_serial and description:
                 photo_url = None
-                if img_file:
+                if img_file is not None:
                     try:
                         file_bytes = img_file.getvalue()
                         clean_tag = "".join([c for c in tag_serial if c.isalnum() or c in ("-", "_")]).strip()
                         filename = f"{current_project['project_code']}/{clean_tag}_mob_{int(datetime.now().timestamp())}.jpg"
-                        supabase.storage.from_("mob-evidences").upload(filename, file_bytes, file_options={"upsert": "true", "content-type": "image/jpeg"})
+                        supabase.storage.from_("mob-evidences").upload(
+                            filename, 
+                            file_bytes, 
+                            file_options={"upsert": "true", "content-type": "image/jpeg"}
+                        )
                         photo_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
+                        st.info(f"📸 Foto associada com sucesso ao item {clean_tag}!")
                     except Exception as err_img:
-                        st.warning(f"Item salvo, mas falhou ao enviar foto: {err_img}")
+                        st.error(f"⚠️ Erro ao salvar imagem no Supabase Storage: {err_img}")
 
                 payload_item = {
                     "project_id": proj_id,
@@ -603,7 +605,7 @@ with tab_mob:
                                 "mob_receipt_timestamp": datetime.now().isoformat()
                             }
                             supabase.table("mob_packing_list_items").update(upd_rec).eq("id", item["id"]).execute()
-                            st.success("Recebimento confirmed!")
+                            st.success("Recebimento confirmado!")
                             st.rerun()
                         except Exception as e_upd:
                             st.error(f"Erro ao confirmar recebimento: {e_upd}")
@@ -650,6 +652,8 @@ with tab_desmob:
 
                 with col_desmob_action:
                     st.caption("🔄 **Check-in de Retorno no Galpão**")
+                    desmob_cam = st.file_uploader("Foto do estado no retorno", type=["jpg", "png", "jpeg"], key=f"cam_{item['id']}")
+                    
                     with st.form(f"form_desmob_{item['id']}"):
                         curr_st = item.get('desmob_status', 'pending')
                         st_options = ["ok", "damaged", "lost", "left_on_site"]
@@ -662,7 +666,6 @@ with tab_desmob:
                             format_func=lambda x: {"ok": "✅ Retornou OK", "damaged": "⚠️ Danificado", "lost": "❌ Perdido / Ausente", "left_on_site": "📍 Deixado no Cliente/Embarcação"}[x]
                         )
                         obs_desmob = st.text_area("Observações de Retorno", value=item.get("desmob_notes") or "")
-                        desmob_cam = st.file_uploader("Foto do estado no retorno", type=["jpg", "png", "jpeg"], key=f"cam_{item['id']}")
                         
                         btn_update = st.form_submit_button("Confirmar Retorno do Item", type="primary")
                         
