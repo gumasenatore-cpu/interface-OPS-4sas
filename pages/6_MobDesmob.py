@@ -25,23 +25,28 @@ st.markdown("""
     <style>
     @media (max-width: 768px) {
         .block-container {
-            padding-left: 0.8rem !important;
-            padding-right: 0.8rem !important;
-            padding-top: 1rem !important;
+            padding-left: 0.6rem !important;
+            padding-right: 0.6rem !important;
+            padding-top: 0.8rem !important;
         }
         .stButton button {
             width: 100% !important;
-            min-height: 48px !important;
+            min-height: 50px !important;
             font-size: 16px !important;
+            border-radius: 8px !important;
         }
         .stSelectbox, .stTextInput, .stNumberInput {
             font-size: 16px !important;
         }
     }
     
-    .level-parent { font-weight: bold; color: #0f2b48; }
-    .level-sub { margin-left: 15px; font-weight: 500; color: #1e3a8a; }
-    .level-item { margin-left: 30px; color: #334155; }
+    .card-item {
+        background-color: #1e293b;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        border: 1px solid #334155;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -389,7 +394,7 @@ tab_mob, tab_desmob, tab_report = st.tabs([
 ])
 
 # ------------------------------------------------------------------------------
-# TAB 1: MOBILIZAÇÃO (REATIVIDADE DINÂMICA COMPROVADA)
+# TAB 1: MOBILIZAÇÃO
 # ------------------------------------------------------------------------------
 with tab_mob:
     st.subheader("➕ 1.1 Cadastro Hierárquico de Carga (Galpão)")
@@ -406,14 +411,13 @@ with tab_mob:
         for _, sb in sub_boxes.iterrows():
             sub_boxes_dict[f"📦 [SUB-CAIXA] {sb['tag_or_serial']} - {sb['description']}"] = sb["id"]
 
-    # SELEÇÃO DINÂMICA REATIVA (FORA DO FORM PARA ATUALIZAR A INTERFACE NO ATO)
     level_choice = st.radio(
-        "1. Nível Hierárquico do Registro:",
+        "1. O que você está cadastrando agora?",
         options=["parent_box", "sub_box", "item"],
         format_func=lambda x: {
             "parent_box": "🧰 1. Caixa Pai / Contêiner Principal",
-            "sub_box": "📦 2. Sub-caixa / Maleta (Dentro de Caixa Pai)",
-            "item": "🏷️ 3. Item / Equipamento (Solto ou Embalado)"
+            "sub_box": "📦 2. Sub-caixa / Maleta",
+            "item": "🏷️ 3. Item Solto / Equipamento"
         }[x],
         horizontal=True
     )
@@ -421,25 +425,24 @@ with tab_mob:
     parent_id = None
     if level_choice == "sub_box":
         if parents_dict:
-            selected_p = st.selectbox("🔗 2. Relacionar com qual Caixa Pai?", list(parents_dict.keys()))
+            selected_p = st.selectbox("🔗 Pertence a qual Caixa Pai?", list(parents_dict.keys()))
             parent_id = parents_dict[selected_p]
         else:
-            st.warning("⚠️ Nenhuma Caixa Pai cadastrada ainda. Cadastre a Caixa Pai primeiro para poder vincular.")
+            st.warning("⚠️ Nenhuma Caixa Pai cadastrada ainda. Cadastre uma Caixa Pai primeiro para vincular.")
     
     elif level_choice == "item":
         all_container_options = {"-- Item Solto (Direto no Deck / Sem Caixa) --": None}
         all_container_options.update(parents_dict)
         all_container_options.update(sub_boxes_dict)
         
-        selected_c = st.selectbox("🔗 2. Relacionar com qual Caixa Pai ou Sub-caixa?", list(all_container_options.keys()))
+        selected_c = st.selectbox("🔗 Pertence a qual Caixa Pai ou Sub-caixa?", list(all_container_options.keys()))
         parent_id = all_container_options[selected_c]
 
-    # FORMULÁRIO DE PREENCHIMENTO DOS DADOS DO ITEM
     with st.form("form_mob_item_hierarchical", clear_on_submit=True):
         col_h1, col_h2 = st.columns(2)
         
         with col_h1:
-            tag_serial = st.text_input("Tag / Nº Patrimônio / Identificador", placeholder="ex: CX-PRINCIPAL-01, MALETA-RTK, TRIMBLE-BX992")
+            tag_serial = st.text_input("Tag / Nº Patrimônio / Identificador", placeholder="ex: CX-PRINCIPAL-01, TRIMBLE-BX992")
             description = st.text_input("Descrição Completa / Conteúdo", placeholder="ex: Mala Peli contendo conjunto completo RTK")
 
         with col_h2:
@@ -447,19 +450,17 @@ with tab_mob:
             value_brl = st.number_input("Valor Declarado (R$)", min_value=0.0, step=100.0, value=0.0)
             mob_notes = st.text_area("Observações de Despacho", placeholder="Estado físico na saída do galpão...")
 
-        st.write("📷 **Foto de Mobilização (Saída Galpão)**")
-        img_camera = st.camera_input("Tirar foto do item / caixa aberta")
-        img_file = st.file_uploader("Ou carregar foto", type=["jpg", "png", "jpeg"], key="mob_upload")
+        st.write("📷 **Foto de Mobilização (Câmera ou Galeria do Celular)**")
+        img_file = st.file_uploader("Toque para tirar foto ou selecionar da galeria", type=["jpg", "png", "jpeg"], key="mob_upload_native")
 
-        btn_save_item = st.form_submit_button("💾 Cadastrar e Despachar Item")
+        btn_save_item = st.form_submit_button("💾 Cadastrar e Despachar Item", type="primary")
 
         if btn_save_item:
             if tag_serial and description:
                 photo_url = None
-                img_to_upload = img_camera or img_file
-                if img_to_upload:
+                if img_file:
                     try:
-                        file_bytes = img_to_upload.getvalue()
+                        file_bytes = img_file.getvalue()
                         filename = f"{current_project['project_code']}/{tag_serial}_mob.jpg"
                         supabase.storage.from_("mob-evidences").upload(filename, file_bytes, file_options={"upsert": "true"})
                         photo_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
@@ -502,37 +503,45 @@ with tab_mob:
             status_symbol = "✅ Recebido no Navio" if is_rec else "⏳ Em Trânsito / Aguardando Confirmação"
             
             with st.expander(f"[{item['tag_or_serial']}] {item['description']} — {status_symbol}"):
-                c1, c2, c3, c4 = st.columns([2.5, 2, 2.5, 1.5])
+                c1, c2 = st.columns([3, 2])
                 with c1:
                     st.write(f"**Identificador:** `{item['tag_or_serial']}`")
                     st.write(f"**Nível:** {item.get('level_type', 'item')}")
                     st.write(f"**Obs. Despacho:** {item.get('mob_notes') or 'Nenhuma'}")
                 with c2:
-                    if item.get("mob_photo_url"):
-                        st.image(item["mob_photo_url"], caption="Foto na Saída (Galpão)", width=130)
-                with c3:
-                    if not is_rec:
-                        op_name = st.text_input("Operador Recebedor", value="Operador Navio", key=f"rec_op_{item['id']}")
-                        if st.button("👍 Confirmar Recebimento", key=f"btn_rec_{item['id']}", type="primary"):
-                            try:
-                                upd_rec = {
-                                    "mob_receipt_ok": True,
-                                    "mob_receipt_by": op_name,
-                                    "mob_receipt_timestamp": datetime.now().isoformat()
-                                }
-                                supabase.table("mob_packing_list_items").update(upd_rec).eq("id", item["id"]).execute()
-                                st.success("Recebimento confirmado!")
-                                st.rerun()
-                            except Exception as e_upd:
-                                st.error(f"Erro ao confirmar recebimento: {e_upd}")
+                    photo_url = item.get("mob_photo_url")
+                    if photo_url and isinstance(photo_url, str) and photo_url.strip():
+                        try:
+                            st.image(photo_url, caption="Foto MOB", use_container_width=True)
+                        except Exception:
+                            st.caption("📷 Foto registrada (Erro ao carregar preview)")
                     else:
-                        st.success(f"Conferido por {item.get('mob_receipt_by')} em {str(item.get('mob_receipt_timestamp'))[:16]}")
+                        st.caption("Sem foto de saída")
+
+                st.divider()
                 
-                with c4:
-                    st.caption("⚙️ Ações")
+                if not is_rec:
+                    op_name = st.text_input("Operador Recebedor", value="Operador Navio", key=f"rec_op_{item['id']}")
+                    if st.button("👍 Confirmar Recebimento OK", key=f"btn_rec_{item['id']}", type="primary"):
+                        try:
+                            upd_rec = {
+                                "mob_receipt_ok": True,
+                                "mob_receipt_by": op_name,
+                                "mob_receipt_timestamp": datetime.now().isoformat()
+                            }
+                            supabase.table("mob_packing_list_items").update(upd_rec).eq("id", item["id"]).execute()
+                            st.success("Recebimento confirmado!")
+                            st.rerun()
+                        except Exception as e_upd:
+                            st.error(f"Erro ao confirmar recebimento: {e_upd}")
+                else:
+                    st.success(f"Conferido por {item.get('mob_receipt_by')} em {str(item.get('mob_receipt_timestamp'))[:16]}")
+                
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
                     if st.button("✏️ Editar", key=f"btn_edit_{item['id']}"):
                         edit_item_dialog(item, df_items)
-                    
+                with col_btn2:
                     if st.button("🗑️ Excluir", key=f"btn_del_{item['id']}", type="secondary"):
                         try:
                             supabase.table("mob_packing_list_items").delete().eq("parent_id", item["id"]).execute()
@@ -552,20 +561,19 @@ with tab_desmob:
     else:
         for idx, item in df_items.iterrows():
             with st.expander(f"[{item['tag_or_serial']}] {item['description']}", expanded=(item.get('desmob_status') == 'pending')):
-                col_info, col_mob_photo, col_desmob_action, col_desmob_manage = st.columns([2, 2, 3, 1])
+                col_info, col_desmob_action = st.columns([2, 3])
                 
                 with col_info:
                     st.markdown(f"**Tag/Serial:** `{item['tag_or_serial']}`")
                     st.markdown(f"**Peso:** {item['weight_kg']} kg | **Valor:** R$ {item['declared_value_brl']:,.2f}")
-                    st.markdown(f"**Obs. Saída (MOB):** {item.get('mob_notes') or 'Nenhuma'}")
                     st.markdown(f"**Status Desmob:** `{str(item.get('desmob_status')).upper()}`")
-
-                with col_mob_photo:
-                    st.caption("📷 **Foto na Mobilização (Saída)**")
-                    if item.get("mob_photo_url"):
-                        st.image(item["mob_photo_url"], use_container_width=True)
-                    else:
-                        st.info("Sem foto registrada na saída.")
+                    
+                    photo_url = item.get("mob_photo_url")
+                    if photo_url and isinstance(photo_url, str) and photo_url.strip():
+                        try:
+                            st.image(photo_url, caption="Foto MOB", use_container_width=True)
+                        except Exception:
+                            pass
 
                 with col_desmob_action:
                     st.caption("🔄 **Check-in de Retorno no Galpão**")
@@ -581,9 +589,9 @@ with tab_desmob:
                             format_func=lambda x: {"ok": "✅ Retornou OK", "damaged": "⚠️ Danificado", "lost": "❌ Perdido / Ausente", "left_on_site": "📍 Deixado no Cliente/Embarcação"}[x]
                         )
                         obs_desmob = st.text_area("Observações de Retorno", value=item.get("desmob_notes") or "")
-                        desmob_cam = st.camera_input("Foto do estado no retorno", key=f"cam_{item['id']}")
+                        desmob_cam = st.file_uploader("Foto do estado no retorno (Câmera ou Galeria)", type=["jpg", "png", "jpeg"], key=f"cam_{item['id']}")
                         
-                        btn_update = st.form_submit_button("Confirmar Retorno do Item")
+                        btn_update = st.form_submit_button("Confirmar Retorno do Item", type="primary")
                         
                         if btn_update:
                             desmob_photo_url = item.get("desmob_photo_url")
@@ -612,10 +620,11 @@ with tab_desmob:
                             except Exception as e_save_desmob:
                                 st.error(f"Erro ao salvar desmobilização: {e_save_desmob}")
                 
-                with col_desmob_manage:
-                    st.caption("⚙️ Ações")
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
                     if st.button("✏️ Editar", key=f"btn_edit_desmob_{item['id']}"):
                         edit_item_dialog(item, df_items)
+                with col_btn2:
                     if st.button("🗑️ Excluir", key=f"btn_del_desmob_{item['id']}", type="secondary"):
                         try:
                             supabase.table("mob_packing_list_items").delete().eq("parent_id", item["id"]).execute()
