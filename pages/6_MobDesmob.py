@@ -70,10 +70,21 @@ def init_supabase():
 supabase: Client = init_supabase()
 
 # ------------------------------------------------------------------------------
-# DIÁLOGO MODAL PARA EDIÇÃO DE ITEM
+# DIÁLOGO MODAL PARA EDIÇÃO COMPLETA DE ITEM
 # ------------------------------------------------------------------------------
 @st.dialog("✏️ Editar Registro do Packing List")
-def edit_item_dialog(item, df_items):
+def edit_item_dialog(item, df_items, current_project):
+    parents_dict = {}
+    sub_boxes_dict = {}
+    if not df_items.empty and "level_type" in df_items:
+        parent_boxes = df_items[(df_items["level_type"] == "parent_box") & (df_items["id"] != item["id"])]
+        for _, b in parent_boxes.iterrows():
+            parents_dict[f"🧰 [CAIXA PAI] {b['tag_or_serial']} - {b['description']}"] = b["id"]
+        
+        sub_boxes = df_items[(df_items["level_type"] == "sub_box") & (df_items["id"] != item["id"])]
+        for _, sb in sub_boxes.iterrows():
+            sub_boxes_dict[f"📦 [SUB-CAIXA] {sb['tag_or_serial']} - {sb['description']}"] = sb["id"]
+
     with st.form("form_edit_item_dialog"):
         new_tag = st.text_input("Tag / Identificador", value=item.get("tag_or_serial", ""))
         
@@ -90,25 +101,71 @@ def edit_item_dialog(item, df_items):
             }[x]
         )
         
+        new_parent_id = item.get("parent_id")
+        if new_level == "sub_box":
+            if parents_dict:
+                p_keys = list(parents_dict.keys())
+                curr_p_idx = 0
+                for i, k in enumerate(p_keys):
+                    if parents_dict[k] == new_parent_id:
+                        curr_p_idx = i
+                        break
+                selected_p = st.selectbox("🔗 Pertence a qual Caixa Pai?", p_keys, index=curr_p_idx)
+                new_parent_id = parents_dict[selected_p]
+            else:
+                st.caption("Sem Caixas Pai cadastradas para vincular.")
+                new_parent_id = None
+        elif new_level == "item":
+            all_container_options = {"-- Item Solto (Direto no Deck / Sem Caixa) --": None}
+            all_container_options.update(parents_dict)
+            all_container_options.update(sub_boxes_dict)
+            
+            c_keys = list(all_container_options.keys())
+            curr_c_idx = 0
+            for i, k in enumerate(c_keys):
+                if all_container_options[k] == new_parent_id:
+                    curr_c_idx = i
+                    break
+            selected_c = st.selectbox("🔗 Pertence a qual Caixa Pai ou Sub-caixa?", c_keys, index=curr_c_idx)
+            new_parent_id = all_container_options[selected_c]
+        else:
+            new_parent_id = None
+
         new_desc = st.text_input("Descrição / Conteúdo", value=item.get("description", ""))
         new_weight = st.number_input("Peso (kg)", min_value=0.0, step=0.5, value=float(item.get("weight_kg", 0.0)))
         new_val = st.number_input("Valor Declarado (R$)", min_value=0.0, step=100.0, value=float(item.get("declared_value_brl", 0.0)))
         new_mob_notes = st.text_area("Obs. Mobilização (Saída)", value=item.get("mob_notes") or "")
         new_desmob_notes = st.text_area("Obs. Desmobilização (Retorno)", value=item.get("desmob_notes") or "")
 
+        st.write("📷 **Atualizar Foto de Mobilização (Opcional)**")
+        new_img_mob = st.file_uploader("Carregar/Substituir foto MOB", type=["jpg", "png", "jpeg"], key=f"edit_mob_photo_{item['id']}")
+
         btn_save_edit = st.form_submit_button("💾 Salvar Alterações", type="primary")
 
         if btn_save_edit:
             if new_tag and new_desc:
+                mob_photo_url = item.get("mob_photo_url")
+                if new_img_mob:
+                    try:
+                        file_bytes = new_img_mob.getvalue()
+                        clean_tag = "".join([c for c in new_tag if c.isalnum() or c in ("-", "_")]).strip()
+                        filename = f"{current_project['project_code']}/{clean_tag}_mob_{int(datetime.now().timestamp())}.jpg"
+                        supabase.storage.from_("mob-evidences").upload(filename, file_bytes, file_options={"upsert": "true", "content-type": "image/jpeg"})
+                        mob_photo_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
+                    except Exception as err_img:
+                        st.warning(f"Item atualizado, mas falhou ao subir nova foto: {err_img}")
+
                 upd_payload = {
                     "tag_or_serial": new_tag.strip(),
                     "description": new_desc.strip(),
                     "level_type": new_level,
+                    "parent_id": new_parent_id,
                     "item_type": "box" if new_level in ["parent_box", "sub_box"] else "loose_item",
                     "weight_kg": new_weight,
                     "declared_value_brl": new_val,
                     "mob_notes": new_mob_notes,
-                    "desmob_notes": new_desmob_notes
+                    "desmob_notes": new_desmob_notes,
+                    "mob_photo_url": mob_photo_url
                 }
                 try:
                     supabase.table("mob_packing_list_items").update(upd_payload).eq("id", item["id"]).execute()
@@ -363,6 +420,21 @@ if selected_proj_label == "-- Criar Nova Campanha --":
 current_project = project_options[selected_proj_label]
 proj_id = current_project["id"]
 
+# --- BLOCO RESTAURADO: GERENCIAMENTO E EXCLUSÃO DA CAMPANHA NA BARRA LATERAL ---
+with st.sidebar.expander("⚙️ Gerenciar Campanha Selecionada"):
+    st.warning(f"Atenção: Excluir a campanha **{current_project['project_code']}** removerá todos os itens e registros vinculados a ela.")
+    if st.button("🗑️ Excluir esta Campanha", type="primary"):
+        try:
+            # Exclusão em cascata: limpa os itens da campanha primeiro
+            supabase.table("mob_packing_list_items").delete().eq("project_id", proj_id).execute()
+            # Exclui o projeto principal
+            supabase.table("mob_projects").delete().eq("id", proj_id).execute()
+            st.success("Campanha excluída com sucesso!")
+            st.rerun()
+        except Exception as e_del_proj:
+            st.error(f"Erro ao excluir campanha: {e_del_proj}")
+# -------------------------------------------------------------------------------
+
 st.markdown(f"### 🚢 {current_project['project_code']} — {current_project.get('vessel_name', '')}")
 st.caption(f"Cliente: **{current_project.get('client_name', 'N/A')}** | Responsável: **{current_project.get('responsible_user', 'N/A')}**")
 
@@ -450,8 +522,8 @@ with tab_mob:
             value_brl = st.number_input("Valor Declarado (R$)", min_value=0.0, step=100.0, value=0.0)
             mob_notes = st.text_area("Observações de Despacho", placeholder="Estado físico na saída do galpão...")
 
-        st.write("📷 **Foto de Mobilização (Câmera ou Galeria do Celular)**")
-        img_file = st.file_uploader("Toque para tirar foto ou selecionar da galeria", type=["jpg", "png", "jpeg"], key="mob_upload_native")
+        st.write("📷 **Foto de Mobilização (Saída Galpão)**")
+        img_file = st.file_uploader("Carregar foto (JPG, PNG)", type=["jpg", "png", "jpeg"], key="mob_upload_native")
 
         btn_save_item = st.form_submit_button("💾 Cadastrar e Despachar Item", type="primary")
 
@@ -461,8 +533,9 @@ with tab_mob:
                 if img_file:
                     try:
                         file_bytes = img_file.getvalue()
-                        filename = f"{current_project['project_code']}/{tag_serial}_mob.jpg"
-                        supabase.storage.from_("mob-evidences").upload(filename, file_bytes, file_options={"upsert": "true"})
+                        clean_tag = "".join([c for c in tag_serial if c.isalnum() or c in ("-", "_")]).strip()
+                        filename = f"{current_project['project_code']}/{clean_tag}_mob_{int(datetime.now().timestamp())}.jpg"
+                        supabase.storage.from_("mob-evidences").upload(filename, file_bytes, file_options={"upsert": "true", "content-type": "image/jpeg"})
                         photo_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
                     except Exception as err_img:
                         st.warning(f"Item salvo, mas falhou ao enviar foto: {err_img}")
@@ -530,7 +603,7 @@ with tab_mob:
                                 "mob_receipt_timestamp": datetime.now().isoformat()
                             }
                             supabase.table("mob_packing_list_items").update(upd_rec).eq("id", item["id"]).execute()
-                            st.success("Recebimento confirmado!")
+                            st.success("Recebimento confirmed!")
                             st.rerun()
                         except Exception as e_upd:
                             st.error(f"Erro ao confirmar recebimento: {e_upd}")
@@ -540,7 +613,7 @@ with tab_mob:
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     if st.button("✏️ Editar", key=f"btn_edit_{item['id']}"):
-                        edit_item_dialog(item, df_items)
+                        edit_item_dialog(item, df_items, current_project)
                 with col_btn2:
                     if st.button("🗑️ Excluir", key=f"btn_del_{item['id']}", type="secondary"):
                         try:
@@ -589,7 +662,7 @@ with tab_desmob:
                             format_func=lambda x: {"ok": "✅ Retornou OK", "damaged": "⚠️ Danificado", "lost": "❌ Perdido / Ausente", "left_on_site": "📍 Deixado no Cliente/Embarcação"}[x]
                         )
                         obs_desmob = st.text_area("Observações de Retorno", value=item.get("desmob_notes") or "")
-                        desmob_cam = st.file_uploader("Foto do estado no retorno (Câmera ou Galeria)", type=["jpg", "png", "jpeg"], key=f"cam_{item['id']}")
+                        desmob_cam = st.file_uploader("Foto do estado no retorno", type=["jpg", "png", "jpeg"], key=f"cam_{item['id']}")
                         
                         btn_update = st.form_submit_button("Confirmar Retorno do Item", type="primary")
                         
@@ -598,8 +671,9 @@ with tab_desmob:
                             if desmob_cam:
                                 try:
                                     f_bytes = desmob_cam.getvalue()
-                                    f_name = f"{current_project['project_code']}/{item['tag_or_serial']}_desmob.jpg"
-                                    supabase.storage.from_("mob-evidences").upload(f_name, f_bytes, file_options={"upsert": "true"})
+                                    clean_tag = "".join([c for c in item['tag_or_serial'] if c.isalnum() or c in ("-", "_")]).strip()
+                                    f_name = f"{current_project['project_code']}/{clean_tag}_desmob_{int(datetime.now().timestamp())}.jpg"
+                                    supabase.storage.from_("mob-evidences").upload(f_name, f_bytes, file_options={"upsert": "true", "content-type": "image/jpeg"})
                                     desmob_photo_url = supabase.storage.from_("mob-evidences").get_public_url(f_name)
                                 except Exception as e_up:
                                     st.error(f"Erro no envio da foto de retorno: {e_up}")
@@ -623,7 +697,7 @@ with tab_desmob:
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     if st.button("✏️ Editar", key=f"btn_edit_desmob_{item['id']}"):
-                        edit_item_dialog(item, df_items)
+                        edit_item_dialog(item, df_items, current_project)
                 with col_btn2:
                     if st.button("🗑️ Excluir", key=f"btn_del_desmob_{item['id']}", type="secondary"):
                         try:
@@ -659,11 +733,11 @@ with tab_report:
 
         with col_exp2:
             st.markdown("##### 📊 Exportar Dados em Planilha (CSV)")
-            st.caption("Exporta os dados completos incluindo hierarquia e responsáveis.")
-            csv = df_items.to_csv(index=False).encode('utf-8')
+            st.caption("Exporta a tabela formatada para Excel (ponto e vírgula e acentuação corrigida).")
+            csv_data = df_items.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
             st.download_button(
-                label="💾 Baixar Tabela de Dados (CSV)",
-                data=csv,
+                label="💾 Baixar Tabela de Dados (CSV / Excel)",
+                data=csv_data,
                 file_name=f"packing_list_{current_project['project_code']}.csv",
                 mime="text/csv"
             )
