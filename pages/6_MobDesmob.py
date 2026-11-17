@@ -5,6 +5,13 @@ from io import BytesIO
 import requests
 from supabase import create_client, Client
 
+# Compressão automática de fotos da câmera mobile (com fallback seguro)
+try:
+    from PIL import Image as PILImage, ImageOps
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 # ReportLab para geração de PDF executivo de alta resolução
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -31,10 +38,25 @@ st.markdown("""
         }
         .stButton button {
             width: 100% !important;
-            min-height: 46px !important;
-            font-size: 15px !important;
+            min-height: 48px !important;
+            font-size: 16px !important;
             border-radius: 8px !important;
         }
+    }
+    .quick-card {
+        background-color: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-left: 5px solid #0f2b48;
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+    }
+    .qty-display {
+        text-align: center;
+        font-size: 20px;
+        font-weight: 700;
+        color: #0f2b48;
+        padding-top: 8px;
     }
     .tree-box-header {
         background-color: #0f2b48;
@@ -79,35 +101,84 @@ def init_supabase():
 supabase: Client = init_supabase()
 
 # ------------------------------------------------------------------------------
-# HELPERS DE UPLOAD, IMAGENS E ORDENAÇÃO HIERÁRQUIICA
+# HELPERS DE COMPRESSÃO, UPLOAD, IMAGENS E ORDENAÇÃO HIERÁRQUICA
 # ------------------------------------------------------------------------------
+def compress_image_for_mobile(raw_bytes: bytes, original_name: str = "", original_mime: str = "image/jpeg"):
+    """
+    Redimensiona fotos pesadas da câmera (5MB-12MB) para no máximo 1024px (JPEG ~150KB),
+    corrigindo orientação EXIF do celular para upload instantâneo em campo.
+    """
+    if not HAS_PIL:
+        ext = "jpg"
+        if original_name and "." in original_name:
+            cand = original_name.rsplit(".", 1)[-1].lower()
+            if cand in ["jpg", "jpeg", "png", "webp"]:
+                ext = cand
+        return raw_bytes, ext, (original_mime or "image/jpeg")
+
+    try:
+        img = PILImage.open(BytesIO(raw_bytes))
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "P", "LA"):
+            background = PILImage.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        img.thumbnail((1024, 1024), PILImage.Resampling.LANCZOS)
+        out_buf = BytesIO()
+        img.save(out_buf, format="JPEG", quality=80, optimize=True)
+        return out_buf.getvalue(), "jpg", "image/jpeg"
+    except Exception:
+        return raw_bytes, "jpg", (original_mime or "image/jpeg")
+
+
+def is_uploaded_file_ready(uploaded_file) -> tuple[bool, str]:
+    """
+    Verifica se o arquivo enviado pelo navegador mobile já concluiu a transferência
+    e possui bytes válidos (evita clicar em Salvar enquanto a câmera ainda está subindo).
+    """
+    if uploaded_file is None:
+        return True, ""
+    try:
+        data = uploaded_file.getvalue()
+        if not data or len(data) == 0:
+            return False, "⏳ A foto da câmera ainda está sendo transferida pelo celular. Aguarde 2 segundos e tente novamente."
+        return True, f"✅ Foto pronta ({round(len(data) / 1024, 1)} KB original)"
+    except Exception:
+        return False, "⏳ Aguardando conclusão do carregamento da foto no navegador..."
+
+
 def upload_photo_to_storage(uploaded_file, project_code, tag_serial, prefix="mob", suffix_idx=0):
     """
-    Faz upload da foto para o bucket 'mob-evidences' e retorna (url_publica, mensagem_erro).
+    Comprime e faz upload da foto para o bucket 'mob-evidences'.
+    Retorna (url_publica, mensagem_erro).
     """
     if uploaded_file is None:
         return None, None
     try:
-        file_bytes = uploaded_file.getvalue()
-        if not file_bytes or len(file_bytes) == 0:
-            return None, "O arquivo de imagem selecionado está vazio (0 bytes)."
+        raw_bytes = uploaded_file.getvalue()
+        if not raw_bytes or len(raw_bytes) == 0:
+            return None, "A foto não terminou de carregar antes do envio (0 bytes). Aguarde o preview da foto aparecer antes de salvar."
+
+        compressed_bytes, file_ext, mime_type = compress_image_for_mobile(
+            raw_bytes,
+            original_name=getattr(uploaded_file, "name", ""),
+            original_mime=getattr(uploaded_file, "type", "image/jpeg")
+        )
 
         clean_tag = "".join([c for c in str(tag_serial) if c.isalnum() or c in ("-", "_")]).strip() or "item"
         clean_proj = "".join([c for c in str(project_code) if c.isalnum() or c in ("-", "_")]).strip() or "proj"
-
-        file_ext = "jpg"
-        mime_type = uploaded_file.type or "image/jpeg"
-        if uploaded_file.name and "." in uploaded_file.name:
-            ext_candidate = uploaded_file.name.rsplit(".", 1)[-1].lower()
-            if ext_candidate in ["jpg", "jpeg", "png", "webp"]:
-                file_ext = ext_candidate
 
         ts = int(datetime.now().timestamp() * 1000)
         filename = f"{clean_proj}/{clean_tag}_{prefix}_{ts}_{suffix_idx}.{file_ext}"
 
         supabase.storage.from_("mob-evidences").upload(
             path=filename,
-            file=file_bytes,
+            file=compressed_bytes,
             file_options={"upsert": "true", "content-type": mime_type}
         )
         public_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
@@ -137,7 +208,6 @@ def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Ordena os itens em árvore real:
     Caixa Pai -> Sub-caixa -> Itens dentro da Sub-caixa -> Itens diretos da Caixa Pai -> Itens soltos no deck.
-    Adiciona colunas auxiliares: 'tree_depth' (0, 1, 2) e 'container_label'.
     """
     if df_raw.empty:
         return df_raw
@@ -171,7 +241,6 @@ def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         ordered_rows.append(row_pb)
         visited_ids.add(pb_id)
 
-        # Sub-caixas dentro desta Caixa Pai
         sub_boxes = df[(df["level_type"] == "sub_box") & (df["parent_id"].astype(str) == pb_id)]
         for _, sb in sub_boxes.iterrows():
             sb_id = str(sb["id"])
@@ -181,7 +250,6 @@ def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
             ordered_rows.append(row_sb)
             visited_ids.add(sb_id)
 
-            # Itens dentro desta Sub-caixa
             sb_items = df[(df["level_type"] == "item") & (df["parent_id"].astype(str) == sb_id)]
             for _, it in sb_items.iterrows():
                 row_it = it.to_dict()
@@ -190,7 +258,6 @@ def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
                 ordered_rows.append(row_it)
                 visited_ids.add(str(it["id"]))
 
-        # Itens diretamente dentro desta Caixa Pai
         pb_items = df[(df["level_type"] == "item") & (df["parent_id"].astype(str) == pb_id)]
         for _, it in pb_items.iterrows():
             row_it = it.to_dict()
@@ -199,7 +266,6 @@ def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
             ordered_rows.append(row_it)
             visited_ids.add(str(it["id"]))
 
-    # Sub-caixas órfãs (caso existam) e seus itens
     orphan_subs = df[(df["level_type"] == "sub_box") & (~df["id"].astype(str).isin(visited_ids))]
     for _, sb in orphan_subs.iterrows():
         sb_id = str(sb["id"])
@@ -217,7 +283,6 @@ def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
             ordered_rows.append(row_it)
             visited_ids.add(str(it["id"]))
 
-    # Itens soltos no deck (sem parent_id) ou remanescentes
     remaining = df[~df["id"].astype(str).isin(visited_ids)]
     for _, it in remaining.iterrows():
         row_it = it.to_dict()
@@ -229,18 +294,13 @@ def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def filter_subtree(df_hier: pd.DataFrame, root_box_id: str) -> pd.DataFrame:
-    """
-    Filtra apenas uma Caixa Pai ou Sub-caixa e tudo que está dentro dela.
-    """
     if df_hier.empty or not root_box_id:
         return df_hier
 
     selected_ids = {str(root_box_id)}
-    # Nível 1 (filhos diretos)
     children_1 = df_hier[df_hier["parent_id"].astype(str) == str(root_box_id)]
     for _, r in children_1.iterrows():
         selected_ids.add(str(r["id"]))
-        # Nível 2 (itens dentro de sub-caixas)
         children_2 = df_hier[df_hier["parent_id"].astype(str) == str(r["id"])]
         for _, r2 in children_2.iterrows():
             selected_ids.add(str(r2["id"]))
@@ -263,12 +323,18 @@ def edit_item_dialog(item, df_items, current_project):
         for _, sb in sub_boxes.iterrows():
             sub_boxes_dict[f"[SUB-CAIXA] {format_tag_display(sb['tag_or_serial'])} - {sb['description']}"] = sb["id"]
 
-    st.write("📷 **Atualizar Foto de Mobilização**")
+    st.write("📷 **Atualizar / Adicionar Foto de Mobilização**")
     new_img_mob = st.file_uploader(
-        "Carregar/Substituir foto MOB",
+        "Tirar foto ou escolher da galeria",
         type=["jpg", "png", "jpeg", "webp"],
         key=f"edit_img_mob_{item['id']}"
     )
+    img_ready, img_msg = is_uploaded_file_ready(new_img_mob)
+    if new_img_mob is not None:
+        if img_ready:
+            st.success(img_msg)
+        else:
+            st.warning(img_msg)
 
     with st.form(f"form_edit_dialog_{item['id']}"):
         curr_tag = "" if item.get("tag_or_serial") == "S/TAG" else (item.get("tag_or_serial") or "")
@@ -325,10 +391,12 @@ def edit_item_dialog(item, df_items, current_project):
         btn_save = st.form_submit_button("💾 Salvar Alterações", type="primary")
 
         if btn_save:
+            if not img_ready:
+                st.error(img_msg)
+                st.stop()
             if not new_desc.strip():
                 st.error("A descrição é obrigatória.")
                 st.stop()
-
             if new_level in ["parent_box", "sub_box"] and not new_tag.strip():
                 st.error("Tag / Identificador é obrigatório para Caixa Pai e Sub-caixa.")
                 st.stop()
@@ -431,8 +499,8 @@ def generate_packing_list_pdf(project_info, df_hier, scope_title="MANIFESTO COMP
     story.append(kpi_table)
     story.append(Spacer(1, 10))
 
-    # Colunas: Tag (82) | Qtd (34) | Descricao / Conteudo (248) | Peso (55) | Valor (75) | Status (70) = 564pt
-    col_widths = [82, 34, 248, 55, 75, 70]
+    # Colunas: Tag (92) | Qtd (32) | Descricao / Conteudo (240) | Peso (55) | Valor (75) | Status (70) = 564pt
+    col_widths = [92, 32, 240, 55, 75, 70]
     table_data = [[
         Paragraph("Tag / Serial", cell_bold_white),
         Paragraph("Qtd", cell_bold_white),
@@ -477,7 +545,7 @@ def generate_packing_list_pdf(project_info, df_hier, scope_title="MANIFESTO COMP
             current_row_idx += 1
 
         elif l_type == "sub_box":
-            indent = "&nbsp;&nbsp;&nbsp;&nbsp;|-- " if depth > 0 else ""
+            indent = "&nbsp;&nbsp;&nbsp;|-- " if depth > 0 else ""
             table_data.append([
                 Paragraph(f"<b>{tag_str}</b>", subbox_title_style),
                 Paragraph(f"<b>{qty_val}</b>", subbox_title_style),
@@ -490,7 +558,7 @@ def generate_packing_list_pdf(project_info, df_hier, scope_title="MANIFESTO COMP
             current_row_idx += 1
 
         else:
-            indent = "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|-- " if depth >= 2 else ("&nbsp;&nbsp;&nbsp;&nbsp;|-- " if depth == 1 else "")
+            indent = "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|-- " if depth >= 2 else ("&nbsp;&nbsp;&nbsp;|-- " if depth == 1 else "")
             table_data.append([
                 Paragraph(tag_str, cell_style),
                 Paragraph(f"<b>{qty_val}</b>", cell_style),
@@ -557,6 +625,10 @@ def generate_packing_list_pdf(project_info, df_hier, scope_title="MANIFESTO COMP
 # INTERFACE PRINCIPAL
 # ------------------------------------------------------------------------------
 st.title("📋 Packing List & Gestão de Carga")
+
+# Feedback persistente após salvar item rápido no ciclo anterior
+if "mob_last_saved_msg" in st.session_state:
+    st.success(st.session_state.pop("mob_last_saved_msg"))
 
 st.sidebar.header("📁 Operação / Campanha")
 
@@ -651,10 +723,10 @@ tab_mob, tab_desmob, tab_report = st.tabs([
 ])
 
 # ------------------------------------------------------------------------------
-# TAB 1: MOBILIZAÇÃO (INDIVIDUAL + LOTE COM MÚLTIPLAS FOTOS)
+# TAB 1: MOBILIZAÇÃO (FLUXO RÁPIDO DE CAMPO + CAIXAS + GALERIA)
 # ------------------------------------------------------------------------------
 with tab_mob:
-    st.subheader("➕ 1.1 Cadastro de Carga no Galpão")
+    st.subheader("⚡ 1.1 Cadastro Rápido de Campo")
 
     parents_dict = {}
     sub_boxes_dict = {}
@@ -665,144 +737,136 @@ with tab_mob:
             sub_boxes_dict[f"📦 [SUB-CAIXA] {format_tag_display(sb['tag_or_serial'])} - {sb['description']}"] = sb["id"]
 
     cad_mode = st.radio(
-        "Modo de Cadastro:",
-        options=["batch", "single"],
-        format_func=lambda x: "⚡ Cadastro em Lote (Vários Itens Soltos dentro de uma Caixa)" if x == "batch" else "📦 Cadastro Individual (Criar Caixa Pai, Sub-caixa ou 1 Item)",
+        "O que você deseja cadastrar agora?",
+        options=["quick_item", "create_box", "gallery_batch"],
+        format_func=lambda x: {
+            "quick_item": "⚡ Item Rápido (1 por vez c/ Câmera)",
+            "create_box": "🧰 Criar Caixa Pai / Sub-caixa",
+            "gallery_batch": "🖼️ Importar Várias Fotos da Galeria"
+        }[x],
         horizontal=True
     )
 
     # --------------------------------------------------------------------------
-    # MODO A: CADASTRO EM LOTE + MÚLTIPLAS FOTOS
+    # MODO 1: CARTÃO ÚNICO RÁPIDO (CAIXA TRAVADA + BOTÕES +/- + TRAVA DE FOTO)
     # --------------------------------------------------------------------------
-    if cad_mode == "batch":
-        all_containers = {"-- Itens Soltos (Direto no Deck) --": None}
+    if cad_mode == "quick_item":
+        all_containers = {"-- Item Solto (Direto no Deck) --": None}
         all_containers.update(parents_dict)
         all_containers.update(sub_boxes_dict)
 
         target_box_label = st.selectbox(
-            "1️⃣ Selecione a Caixa de Destino para todos os itens abaixo:",
+            "📍 Caixa / Local de Destino (fica travada para os próximos itens):",
             list(all_containers.keys()),
-            key="batch_target_box"
+            key=f"quick_target_box_{proj_id}"
         )
-        batch_parent_id = all_containers[target_box_label]
+        quick_parent_id = all_containers[target_box_label]
 
-        # Inicializa controle de linhas dinâmicas do lote
-        batch_rows_key = f"batch_rows_{proj_id}"
-        if batch_rows_key not in st.session_state:
-            st.session_state[batch_rows_key] = 3
+        # Contador ao vivo de itens já dentro da caixa selecionada
+        if not df_items.empty:
+            if quick_parent_id is None:
+                count_in_box = len(df_items[(df_items["level_type"] == "item") & (df_items["parent_id"].isna())])
+            else:
+                count_in_box = len(df_items[df_items["parent_id"].astype(str) == str(quick_parent_id)])
+            st.caption(f"📊 Já registrados neste destino: **{count_in_box} itens**")
 
-        st.markdown("##### 📸 Atalho: Subir ou Tirar Múltiplas Fotos de uma Vez (Opcional)")
-        st.caption("Selecione várias fotos da galeria/câmera. Cada foto cria automaticamente uma linha abaixo para você só digitar a descrição e quantidade.")
-        multi_photos = st.file_uploader(
-            "Selecionar múltiplas fotos dos itens desta caixa",
+        # Inicializa estado do cartão rápido (com contador de reset limpo)
+        reset_counter_key = f"quick_reset_cnt_{proj_id}"
+        if reset_counter_key not in st.session_state:
+            st.session_state[reset_counter_key] = 0
+        rc = st.session_state[reset_counter_key]
+
+        qty_state_key = f"quick_qty_{proj_id}_{rc}"
+        if qty_state_key not in st.session_state:
+            st.session_state[qty_state_key] = 1
+
+        st.markdown("<div class='quick-card'>", unsafe_allow_html=True)
+
+        # 1) Foto da Câmera / Galeria com validação de integridade
+        q_photo = st.file_uploader(
+            "📷 1. Foto do Item (Câmera ou Galeria)",
             type=["jpg", "png", "jpeg", "webp"],
-            accept_multiple_files=True,
-            key=f"batch_multi_photos_{proj_id}"
+            key=f"quick_photo_{proj_id}_{rc}"
+        )
+        photo_ready, photo_status_msg = is_uploaded_file_ready(q_photo)
+        if q_photo is not None:
+            if photo_ready:
+                st.success(photo_status_msg)
+            else:
+                st.warning(photo_status_msg)
+
+        # 2) Nome do Item
+        q_desc = st.text_input(
+            "🏷️ 2. Nome / Descrição do Item *",
+            placeholder="ex: Cabo Sensys LAN, Magnetômetro, Adaptador...",
+            key=f"quick_desc_{proj_id}_{rc}"
         )
 
-        # Garante que o número de linhas seja pelo menos o número de fotos selecionadas
-        num_photos = len(multi_photos) if multi_photos else 0
-        if num_photos > st.session_state[batch_rows_key]:
-            st.session_state[batch_rows_key] = num_photos
-
-        col_add_row, col_reset_rows = st.columns([2, 2])
-        with col_add_row:
-            if st.button("➕ Adicionar +1 Linha de Item", key="btn_add_batch_row"):
-                st.session_state[batch_rows_key] += 1
+        # 3) Quantidade com botões grandes + e -
+        st.markdown("**🔢 3. Quantidade:**")
+        c_q1, c_q2, c_q3 = st.columns([1, 1, 1])
+        with c_q1:
+            if st.button("➖", key=f"btn_minus_{proj_id}_{rc}"):
+                if st.session_state[qty_state_key] > 1:
+                    st.session_state[qty_state_key] -= 1
+                    st.rerun()
+        with c_q2:
+            st.markdown(f"<div class='qty-display'>{st.session_state[qty_state_key]} un</div>", unsafe_allow_html=True)
+        with c_q3:
+            if st.button("➕", key=f"btn_plus_{proj_id}_{rc}"):
+                st.session_state[qty_state_key] += 1
                 st.rerun()
-        with col_reset_rows:
-            if st.session_state[batch_rows_key] > 1 and st.button("➖ Remover Última Linha", key="btn_rem_batch_row"):
-                st.session_state[batch_rows_key] -= 1
-                st.rerun()
 
-        st.markdown("---")
-        batch_entries = []
+        # Campos avançados opcionais recolhidos para não poluir a tela do celular
+        with st.expander("⚙️ Opcionais (Tag / Serial, Peso, Valor, Observação)"):
+            q_tag = st.text_input("Tag / Número de Série (deixe vazio para S/TAG)", key=f"quick_tag_{proj_id}_{rc}")
+            c_opt1, c_opt2 = st.columns(2)
+            with c_opt1:
+                q_weight = st.number_input("Peso Total (kg)", min_value=0.0, step=0.5, value=0.0, key=f"quick_w_{proj_id}_{rc}")
+            with c_opt2:
+                q_val = st.number_input("Valor Total (R$)", min_value=0.0, step=100.0, value=0.0, key=f"quick_v_{proj_id}_{rc}")
+            q_notes = st.text_input("Observação de despacho", key=f"quick_notes_{proj_id}_{rc}")
 
-        for i in range(st.session_state[batch_rows_key]):
-            linked_photo = multi_photos[i] if (multi_photos and i < len(multi_photos)) else None
-            header_lbl = f"**Item #{i + 1}**" + (f" — 📎 Foto vinculada: `{linked_photo.name}`" if linked_photo else "")
-            st.markdown(header_lbl)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            c_b1, c_b2, c_b3 = st.columns([4, 1, 2])
-            with c_b1:
-                b_desc = st.text_input(
-                    "Descrição do Item *",
-                    placeholder="ex: Cabo Sensys LAN, Adaptador USB-Serial...",
-                    key=f"b_desc_{proj_id}_{i}",
-                    label_visibility="collapsed"
-                )
-            with c_b2:
-                b_qty = st.number_input(
-                    "Qtd",
-                    min_value=1,
-                    step=1,
-                    value=1,
-                    key=f"b_qty_{proj_id}_{i}",
-                    label_visibility="collapsed"
-                )
-            with c_b3:
-                b_tag = st.text_input(
-                    "Tag (opcional)",
-                    placeholder="Tag (opcional)",
-                    key=f"b_tag_{proj_id}_{i}",
-                    label_visibility="collapsed"
-                )
-
-            # Se não veio foto pelo uploader múltiplo, oferece foto individual discreta
-            row_photo = linked_photo
-            if linked_photo is None:
-                row_photo = st.file_uploader(
-                    f"📷 Foto opcional (Item #{i + 1})",
-                    type=["jpg", "png", "jpeg", "webp"],
-                    key=f"b_photo_{proj_id}_{i}"
-                )
+        # Botão principal de salvamento com trava caso a foto ainda esteja transferindo
+        save_disabled = (q_photo is not None and not photo_ready)
+        if st.button(
+            "✅ Salvar e Próximo Item",
+            type="primary",
+            disabled=save_disabled,
+            key=f"btn_quick_save_{proj_id}_{rc}"
+        ):
+            if not q_desc or not q_desc.strip():
+                st.warning("⚠️ Digite o nome do item antes de salvar.")
             else:
-                try:
-                    st.image(linked_photo, width=110)
-                except Exception:
-                    pass
+                final_tag = q_tag.strip() if (q_tag and q_tag.strip()) else "S/TAG"
+                qty_to_save = int(st.session_state[qty_state_key])
 
-            batch_entries.append({
-                "desc": b_desc,
-                "qty": b_qty,
-                "tag": b_tag,
-                "photo": row_photo
-            })
-            st.markdown("<hr style='margin: 6px 0; border-color: #e2e8f0;'>", unsafe_allow_html=True)
-
-        if st.button("💾 Salvar Todos os Itens Preenchidos na Caixa", type="primary", key="btn_save_batch_all"):
-            valid_entries = [e for e in batch_entries if e["desc"] and e["desc"].strip()]
-            if not valid_entries:
-                st.warning("⚠️ Preencha a descrição de pelo menos 1 item antes de salvar.")
-            else:
-                progress_bar = st.progress(0, text="Salvando itens e enviando fotos...")
-                saved_count = 0
-                for idx_e, entry in enumerate(valid_entries):
-                    final_tag = entry["tag"].strip() if entry["tag"] and entry["tag"].strip() else "S/TAG"
+                with st.spinner("Comprimindo foto e salvando item..."):
                     photo_url = None
-                    if entry["photo"] is not None:
+                    if q_photo is not None:
                         photo_url, up_err = upload_photo_to_storage(
-                            entry["photo"],
+                            q_photo,
                             current_project["project_code"],
                             final_tag,
-                            prefix="mob",
-                            suffix_idx=idx_e
+                            prefix="mob"
                         )
                         if up_err:
-                            st.error(f"Erro na foto do item '{entry['desc']}': {up_err}")
+                            st.error(up_err)
                             st.stop()
 
                     payload_item = {
                         "project_id": proj_id,
-                        "parent_id": batch_parent_id,
+                        "parent_id": quick_parent_id,
                         "level_type": "item",
                         "item_type": "loose_item",
                         "tag_or_serial": final_tag,
-                        "description": entry["desc"].strip(),
-                        "quantity": int(entry["qty"]),
-                        "weight_kg": 0.0,
-                        "declared_value_brl": 0.0,
-                        "mob_notes": None,
+                        "description": q_desc.strip(),
+                        "quantity": qty_to_save,
+                        "weight_kg": float(q_weight),
+                        "declared_value_brl": float(q_val),
+                        "mob_notes": q_notes.strip() if q_notes else None,
                         "mob_photo_url": photo_url,
                         "mob_dispatch_ok": True,
                         "mob_by": current_user_email,
@@ -810,111 +874,180 @@ with tab_mob:
                     }
                     try:
                         supabase.table("mob_packing_list_items").insert(payload_item).execute()
-                        saved_count += 1
-                    except Exception as e:
-                        st.error(f"Erro ao salvar '{entry['desc']}': {e}")
-                        st.stop()
-
-                    progress_bar.progress((idx_e + 1) / len(valid_entries), text=f"Salvo {idx_e + 1}/{len(valid_entries)}...")
-
-                # Limpa campos do lote para próximo uso
-                for i in range(st.session_state[batch_rows_key]):
-                    for k_prefix in ["b_desc_", "b_tag_"]:
-                        st.session_state.pop(f"{k_prefix}{proj_id}_{i}", None)
-                st.session_state[batch_rows_key] = 3
-                st.success(f"✅ {saved_count} itens cadastrados com sucesso em {target_box_label}!")
-                st.rerun()
-
-    # --------------------------------------------------------------------------
-    # MODO B: CADASTRO INDIVIDUAL (CAIXAS PAI, SUB-CAIXAS OU ITEM ÚNICO)
-    # --------------------------------------------------------------------------
-    else:
-        level_choice = st.radio(
-            "1. Nível do Equipamento / Recipiente:",
-            options=["parent_box", "sub_box", "item"],
-            format_func=lambda x: {"parent_box": "🧰 1. Caixa Pai / Contêiner Principal", "sub_box": "📦 2. Sub-caixa / Maleta", "item": "🏷️ 3. Item Solto / Equipamento"}[x],
-            horizontal=True
-        )
-
-        parent_id = None
-        if level_choice == "sub_box":
-            if parents_dict:
-                selected_p = st.selectbox("🔗 Pertence a qual Caixa Pai?", list(parents_dict.keys()))
-                parent_id = parents_dict[selected_p]
-            else:
-                st.warning("⚠️ Cadastre uma Caixa Pai primeiro para vincular esta sub-caixa.")
-        elif level_choice == "item":
-            all_containers = {"-- Item Solto (Direto no Deck) --": None}
-            all_containers.update(parents_dict)
-            all_containers.update(sub_boxes_dict)
-            selected_c = st.selectbox("🔗 Pertence a qual Caixa Pai ou Sub-caixa?", list(all_containers.keys()))
-            parent_id = all_containers[selected_c]
-
-        st.write("📷 **Evidência Fotográfica de Saída (Galpão)**")
-        img_file = st.file_uploader(
-            "Toque para tirar foto ou pegar da galeria",
-            type=["jpg", "png", "jpeg", "webp"],
-            key="mob_img_uploader_direct"
-        )
-        if img_file is not None:
-            st.caption(f"📎 Arquivo pronto para envio: **{img_file.name}** ({round(img_file.size / 1024, 1)} KB)")
-
-        tag_required = level_choice in ["parent_box", "sub_box"]
-        tag_label = "Tag / Identificador *" if tag_required else "Tag / Identificador (opcional para item solto)"
-
-        with st.form("form_mob_cad_item", clear_on_submit=True):
-            c_t1, c_t2 = st.columns(2)
-            with c_t1:
-                tag_serial = st.text_input(tag_label, placeholder="ex: CAIXA-MAG-01 (ou deixe vazio p/ item solto)")
-                c_desc, c_qty = st.columns([3, 1])
-                with c_desc:
-                    description = st.text_input("Descrição Completa *", placeholder="ex: Cabo Sensys LAN")
-                with c_qty:
-                    quantity = st.number_input("Qtd", min_value=1, step=1, value=1)
-            with c_t2:
-                weight = st.number_input("Peso Total (kg)", min_value=0.0, step=0.5, value=0.0)
-                value_brl = st.number_input("Valor Declarado Total (R$)", min_value=0.0, step=100.0, value=0.0)
-                mob_notes = st.text_area("Obs. Despacho", placeholder="Estado físico na saída do galpão...")
-
-            btn_save_item = st.form_submit_button("💾 Cadastrar Item no Packing List", type="primary")
-
-            if btn_save_item:
-                if not description.strip():
-                    st.warning("⚠️ A descrição é obrigatória.")
-                elif tag_required and not tag_serial.strip():
-                    st.warning("⚠️ Tag / Identificador é obrigatório para Caixa Pai e Sub-caixa.")
-                else:
-                    final_tag = tag_serial.strip() if tag_serial.strip() else "S/TAG"
-                    photo_url = None
-                    if img_file is not None:
-                        photo_url, upload_err = upload_photo_to_storage(img_file, current_project['project_code'], final_tag, prefix="mob")
-                        if upload_err:
-                            st.error(upload_err)
-                            st.stop()
-
-                    payload_item = {
-                        "project_id": proj_id,
-                        "parent_id": parent_id,
-                        "level_type": level_choice,
-                        "item_type": "box" if level_choice in ["parent_box", "sub_box"] else "loose_item",
-                        "tag_or_serial": final_tag,
-                        "description": description.strip(),
-                        "quantity": int(quantity),
-                        "weight_kg": weight,
-                        "declared_value_brl": value_brl,
-                        "mob_notes": mob_notes,
-                        "mob_photo_url": photo_url,
-                        "mob_dispatch_ok": True,
-                        "mob_by": current_user_email,
-                        "mob_timestamp": datetime.now().isoformat()
-                    }
-
-                    try:
-                        supabase.table("mob_packing_list_items").insert(payload_item).execute()
-                        st.success(f"✅ [{final_tag}] {description} ({quantity} un) salvo com sucesso!")
+                        # Incrementa o contador de reset para limpar os inputs mantendo a caixa selecionada
+                        st.session_state[reset_counter_key] += 1
+                        foto_txt = " (com foto)" if photo_url else " (sem foto)"
+                        st.session_state["mob_last_saved_msg"] = f"✅ Salvo: {qty_to_save}x {q_desc.strip()}{foto_txt}. Pronto para o próximo!"
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao salvar item: {e}")
+
+    # --------------------------------------------------------------------------
+    # MODO 2: CRIAR CAIXA PAI OU SUB-CAIXA
+    # --------------------------------------------------------------------------
+    elif cad_mode == "create_box":
+        box_level = st.radio(
+            "Tipo de Recipiente:",
+            options=["parent_box", "sub_box"],
+            format_func=lambda x: "🧰 Caixa Pai / Contêiner Principal" if x == "parent_box" else "📦 Sub-caixa / Maleta Interna",
+            horizontal=True
+        )
+
+        box_parent_id = None
+        if box_level == "sub_box":
+            if parents_dict:
+                sel_p = st.selectbox("🔗 Esta Sub-caixa está dentro de qual Caixa Pai?", list(parents_dict.keys()))
+                box_parent_id = parents_dict[sel_p]
+            else:
+                st.warning("⚠️ Cadastre uma Caixa Pai primeiro para vincular esta Sub-caixa.")
+
+        box_photo = st.file_uploader(
+            "📷 Foto Externa da Caixa (Câmera ou Galeria)",
+            type=["jpg", "png", "jpeg", "webp"],
+            key="box_img_uploader_direct"
+        )
+        b_photo_ready, b_photo_msg = is_uploaded_file_ready(box_photo)
+        if box_photo is not None:
+            if b_photo_ready:
+                st.success(b_photo_msg)
+            else:
+                st.warning(b_photo_msg)
+
+        with st.form("form_create_box_cad", clear_on_submit=True):
+            c_bx1, c_bx2 = st.columns(2)
+            with c_bx1:
+                box_tag = st.text_input("Tag / Código da Caixa *", placeholder="ex: CAIXA-MAG-01")
+                box_desc = st.text_input("Descrição da Caixa *", placeholder="ex: Patola laranja / Caixa metálica azul")
+            with c_bx2:
+                box_weight = st.number_input("Peso Bruto (kg)", min_value=0.0, step=0.5, value=0.0)
+                box_val = st.number_input("Valor Declarado (R$)", min_value=0.0, step=100.0, value=0.0)
+                box_notes = st.text_input("Obs. da Caixa (lacre, estado físico...)")
+
+            btn_save_box = st.form_submit_button("💾 Cadastrar Caixa", type="primary")
+            if btn_save_box:
+                if not b_photo_ready:
+                    st.error(b_photo_msg)
+                    st.stop()
+                if not box_tag.strip() or not box_desc.strip():
+                    st.warning("⚠️ Tag e Descrição são obrigatórias para cadastrar uma caixa.")
+                else:
+                    photo_url = None
+                    if box_photo is not None:
+                        photo_url, up_err = upload_photo_to_storage(box_photo, current_project["project_code"], box_tag.strip(), prefix="mob")
+                        if up_err:
+                            st.error(up_err)
+                            st.stop()
+
+                    payload_box = {
+                        "project_id": proj_id,
+                        "parent_id": box_parent_id,
+                        "level_type": box_level,
+                        "item_type": "box",
+                        "tag_or_serial": box_tag.strip(),
+                        "description": box_desc.strip(),
+                        "quantity": 1,
+                        "weight_kg": float(box_weight),
+                        "declared_value_brl": float(box_val),
+                        "mob_notes": box_notes.strip() if box_notes else None,
+                        "mob_photo_url": photo_url,
+                        "mob_dispatch_ok": True,
+                        "mob_by": current_user_email,
+                        "mob_timestamp": datetime.now().isoformat()
+                    }
+                    try:
+                        supabase.table("mob_packing_list_items").insert(payload_box).execute()
+                        st.session_state["mob_last_saved_msg"] = f"✅ Caixa [{box_tag.strip()}] cadastrada!"
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao cadastrar caixa: {e}")
+
+    # --------------------------------------------------------------------------
+    # MODO 3: IMPORTAR VÁRIAS FOTOS DA GALERIA DE UMA VEZ
+    # --------------------------------------------------------------------------
+    else:
+        all_containers = {"-- Itens Soltos (Direto no Deck) --": None}
+        all_containers.update(parents_dict)
+        all_containers.update(sub_boxes_dict)
+
+        gal_box_label = st.selectbox(
+            "📍 Caixa de Destino para as fotos importadas:",
+            list(all_containers.keys()),
+            key="gal_target_box"
+        )
+        gal_parent_id = all_containers[gal_box_label]
+
+        multi_photos = st.file_uploader(
+            "Selecione várias fotos já tiradas na galeria do celular",
+            type=["jpg", "png", "jpeg", "webp"],
+            accept_multiple_files=True,
+            key=f"gal_multi_photos_{proj_id}"
+        )
+
+        if multi_photos:
+            st.info(f"📎 {len(multi_photos)} fotos carregadas. Preencha o nome e a quantidade de cada uma abaixo:")
+            gal_entries = []
+            for idx_p, p_file in enumerate(multi_photos):
+                c_g1, c_g2, c_g3 = st.columns([1, 3, 1])
+                with c_g1:
+                    try:
+                        st.image(p_file, width=80)
+                    except Exception:
+                        st.caption(p_file.name)
+                with c_g2:
+                    g_desc = st.text_input(
+                        f"Nome do Item #{idx_p + 1} *",
+                        placeholder="ex: Cabo LAN, Adaptador...",
+                        key=f"gal_desc_{proj_id}_{idx_p}"
+                    )
+                with c_g3:
+                    g_qty = st.number_input(
+                        "Qtd",
+                        min_value=1,
+                        step=1,
+                        value=1,
+                        key=f"gal_qty_{proj_id}_{idx_p}"
+                    )
+                gal_entries.append({"photo": p_file, "desc": g_desc, "qty": g_qty})
+
+            if st.button("💾 Salvar Todos os Itens da Galeria", type="primary", key="btn_save_gal_all"):
+                valid_gal = [e for e in gal_entries if e["desc"] and e["desc"].strip()]
+                if not valid_gal:
+                    st.warning("⚠️ Preencha o nome de pelo menos 1 item antes de salvar.")
+                else:
+                    prog = st.progress(0, text="Comprimindo e enviando fotos...")
+                    for idx_v, entry in enumerate(valid_gal):
+                        photo_url, up_err = upload_photo_to_storage(
+                            entry["photo"],
+                            current_project["project_code"],
+                            "STAG",
+                            prefix="mob",
+                            suffix_idx=idx_v
+                        )
+                        if up_err:
+                            st.error(up_err)
+                            st.stop()
+
+                        payload_g = {
+                            "project_id": proj_id,
+                            "parent_id": gal_parent_id,
+                            "level_type": "item",
+                            "item_type": "loose_item",
+                            "tag_or_serial": "S/TAG",
+                            "description": entry["desc"].strip(),
+                            "quantity": int(entry["qty"]),
+                            "weight_kg": 0.0,
+                            "declared_value_brl": 0.0,
+                            "mob_notes": None,
+                            "mob_photo_url": photo_url,
+                            "mob_dispatch_ok": True,
+                            "mob_by": current_user_email,
+                            "mob_timestamp": datetime.now().isoformat()
+                        }
+                        supabase.table("mob_packing_list_items").insert(payload_g).execute()
+                        prog.progress((idx_v + 1) / len(valid_gal))
+
+                    st.session_state["mob_last_saved_msg"] = f"✅ {len(valid_gal)} itens importados da galeria com sucesso!"
+                    st.rerun()
 
     # --------------------------------------------------------------------------
     # LISTAGEM HIERÁRQUICA E CHECKLIST DE RECEBIMENTO
@@ -925,7 +1058,6 @@ with tab_mob:
     if df_items.empty:
         st.info("Nenhum item cadastrado até o momento.")
     else:
-        # Filtro por caixa na tela
         box_filter_opts = {"📋 Mostrar Toda a Carga (Árvore Completa)": None}
         for _, bx in df_items[df_items["level_type"].isin(["parent_box", "sub_box"])].iterrows():
             prefix_b = "🧰" if bx["level_type"] == "parent_box" else "📦"
@@ -941,6 +1073,7 @@ with tab_mob:
             depth = int(item.get("tree_depth", 0))
             tag_disp = format_tag_display(item.get("tag_or_serial"))
             qty_disp = int(item.get("quantity", 1))
+            has_photo_icon = "📷" if (isinstance(item.get("mob_photo_url"), str) and item.get("mob_photo_url").startswith("http")) else "⚠️ s/ foto"
 
             if l_type == "parent_box":
                 st.markdown(f"<div class='tree-box-header'>🧰 CAIXA PAI: [{tag_disp}] {item['description']} — {status_txt}</div>", unsafe_allow_html=True)
@@ -949,7 +1082,7 @@ with tab_mob:
 
             indent_prefix = "↳ " if depth >= 1 and l_type == "item" else ""
             tag_badge = f"[{tag_disp}] " if tag_disp != "S/TAG" else ""
-            expander_label = f"{indent_prefix}{qty_disp}x {tag_badge}{item['description']} ({item.get('container_label', '')}) — {status_txt}"
+            expander_label = f"{indent_prefix}{qty_disp}x {tag_badge}{item['description']} ({has_photo_icon}) — {status_txt}"
 
             with st.expander(expander_label):
                 col_left, col_right = st.columns([3, 2])
@@ -960,7 +1093,7 @@ with tab_mob:
                     st.markdown(f"**Obs. Despacho Galpão:** {item.get('mob_notes') or 'Nenhuma'}")
                 with col_right:
                     if not render_safe_image(item.get("mob_photo_url"), caption="Evidência Fotográfica MOB"):
-                        st.warning("Sem foto registrada na saída")
+                        st.warning("Sem foto registrada na saída — toque em 'Editar Registro' abaixo para adicionar.")
 
                 st.divider()
 
@@ -983,7 +1116,7 @@ with tab_mob:
 
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
-                    if st.button("✏️ Editar Registro", key=f"btn_ed_{item['id']}"):
+                    if st.button("✏️ Editar / Adicionar Foto", key=f"btn_ed_{item['id']}"):
                         edit_item_dialog(item, df_items, current_project)
                 with col_b2:
                     if st.button("🗑️ Excluir Item", key=f"btn_del_{item['id']}", type="secondary"):
@@ -1024,6 +1157,12 @@ with tab_desmob:
                         type=["jpg", "png", "jpeg", "webp"],
                         key=f"cam_desmob_{item['id']}"
                     )
+                    d_ready, d_msg = is_uploaded_file_ready(desmob_cam)
+                    if desmob_cam is not None:
+                        if d_ready:
+                            st.success(d_msg)
+                        else:
+                            st.warning(d_msg)
 
                     with st.form(f"form_desmob_check_{item['id']}"):
                         curr_st = item.get('desmob_status', 'pending')
@@ -1040,6 +1179,10 @@ with tab_desmob:
                         btn_ret = st.form_submit_button("Confirmar Chegada", type="primary")
 
                         if btn_ret:
+                            if not d_ready:
+                                st.error(d_msg)
+                                st.stop()
+
                             desmob_url = item.get("desmob_photo_url")
                             if not isinstance(desmob_url, str) or not desmob_url.strip().startswith("http"):
                                 desmob_url = None
@@ -1074,7 +1217,6 @@ with tab_desmob:
 with tab_report:
     st.subheader("📊 Relatórios e Documentação Física da Caixa")
     if not df_items.empty:
-        # Seletor de escopo do PDF (Campanha inteira ou Etiqueta interna de uma caixa específica)
         pdf_scope_opts = {"📋 Campanha Completa (Todos os Volumes e Itens)": (None, "MANIFESTO DE CARGA / PACKING LIST")}
         for _, bx in df_items[df_items["level_type"].isin(["parent_box", "sub_box"])].iterrows():
             b_tag = format_tag_display(bx["tag_or_serial"])
