@@ -66,34 +66,40 @@ def init_supabase():
 supabase: Client = init_supabase()
 
 # ------------------------------------------------------------------------------
-# HELPER DE UPLOAD DE FOTOS DIRETO NO STORAGE (PERSISTÊNCIA GARANTIDA)
+# HELPER DE UPLOAD DE FOTOS DIRETO NO STORAGE (COM DIAGNÓSTICO EXPLÍCITO)
 # ------------------------------------------------------------------------------
 def upload_photo_to_storage(uploaded_file, project_code, tag_serial, prefix="mob"):
+    """
+    Retorna uma tupla: (url_publica, mensagem_erro)
+    """
     if uploaded_file is None:
-        return None
+        return None, None
     try:
         file_bytes = uploaded_file.getvalue()
         if not file_bytes or len(file_bytes) == 0:
-            return None
+            return None, "O arquivo de imagem selecionado está vazio (0 bytes)."
         
         clean_tag = "".join([c for c in str(tag_serial) if c.isalnum() or c in ("-", "_")]).strip() or "item"
+        clean_proj = "".join([c for c in str(project_code) if c.isalnum() or c in ("-", "_")]).strip() or "proj"
+        
         file_ext = "jpg"
-        mime_type = "image/jpeg"
-        if uploaded_file.name and uploaded_file.name.lower().endswith(".png"):
-            file_ext = "png"
-            mime_type = "image/png"
+        mime_type = uploaded_file.type or "image/jpeg"
+        if uploaded_file.name and "." in uploaded_file.name:
+            ext_candidate = uploaded_file.name.rsplit(".", 1)[-1].lower()
+            if ext_candidate in ["jpg", "jpeg", "png", "webp"]:
+                file_ext = ext_candidate
 
-        filename = f"{project_code}/{clean_tag}_{prefix}_{int(datetime.now().timestamp())}.{file_ext}"
+        filename = f"{clean_proj}/{clean_tag}_{prefix}_{int(datetime.now().timestamp())}.{file_ext}"
         
         supabase.storage.from_("mob-evidences").upload(
             path=filename,
             file=file_bytes,
             file_options={"upsert": "true", "content-type": mime_type}
         )
-        return supabase.storage.from_("mob-evidences").get_public_url(filename)
+        public_url = supabase.storage.from_("mob-evidences").get_public_url(filename)
+        return public_url, None
     except Exception as e:
-        st.error(f"⚠️ Falha ao salvar foto no Storage: {e}")
-        return None
+        return None, f"Erro no Supabase Storage (verifique as Policies do bucket 'mob-evidences'): {e}"
 
 # ------------------------------------------------------------------------------
 # MODAL DE EDIÇÃO DE ITEM
@@ -112,7 +118,7 @@ def edit_item_dialog(item, df_items, current_project):
             sub_boxes_dict[f"📦 [SUB-CAIXA] {sb['tag_or_serial']} - {sb['description']}"] = sb["id"]
 
     st.write("📷 **Atualizar Foto de Mobilização**")
-    new_img_mob = st.file_uploader("Carregar/Substituir foto MOB", type=["jpg", "png", "jpeg"], key=f"edit_img_mob_{item['id']}")
+    new_img_mob = st.file_uploader("Carregar/Substituir foto MOB", type=["jpg", "png", "jpeg", "webp"], key=f"edit_img_mob_{item['id']}")
 
     with st.form(f"form_edit_dialog_{item['id']}"):
         new_tag = st.text_input("Tag / Identificador", value=item.get("tag_or_serial", ""))
@@ -161,7 +167,10 @@ def edit_item_dialog(item, df_items, current_project):
         if btn_save:
             mob_url = item.get("mob_photo_url")
             if new_img_mob:
-                up_url = upload_photo_to_storage(new_img_mob, current_project["project_code"], new_tag, prefix="mob")
+                up_url, up_err = upload_photo_to_storage(new_img_mob, current_project["project_code"], new_tag, prefix="mob")
+                if up_err:
+                    st.error(up_err)
+                    st.stop()
                 if up_url:
                     mob_url = up_url
 
@@ -183,7 +192,7 @@ def edit_item_dialog(item, df_items, current_project):
                 st.error(f"Erro ao salvar alterações: {e}")
 
 # ------------------------------------------------------------------------------
-# GERADOR DE PDF EXECUTIVO (COPIA FÍSICA PARA CAIXA)
+# GERADOR DE PDF EXECUTIVO (CÓPIA FÍSICA PARA CAIXA)
 # ------------------------------------------------------------------------------
 def generate_packing_list_pdf(project_info, df_items):
     buffer = BytesIO()
@@ -275,7 +284,7 @@ def generate_packing_list_pdf(project_info, df_items):
 
         if row.get("mob_photo_url"):
             try:
-                r1 = requests.get(row["mob_photo_url"], timeout=4)
+                r1 = requests.get(row["mob_photo_url"], timeout=5)
                 if r1.status_code == 200:
                     mob_img_obj = RLImage(BytesIO(r1.content), width=90, height=65)
             except Exception:
@@ -283,7 +292,7 @@ def generate_packing_list_pdf(project_info, df_items):
 
         if row.get("desmob_photo_url"):
             try:
-                r2 = requests.get(row["desmob_photo_url"], timeout=4)
+                r2 = requests.get(row["desmob_photo_url"], timeout=5)
                 if r2.status_code == 200:
                     desmob_img_obj = RLImage(BytesIO(r2.content), width=90, height=65)
             except Exception:
@@ -448,7 +457,9 @@ with tab_mob:
         parent_id = all_containers[selected_c]
 
     st.write("📷 **Evidência Fotográfica de Saída (Galpão)**")
-    img_file = st.file_uploader("Toque para tirar foto ou pegar da galeria", type=["jpg", "png", "jpeg"], key="mob_img_uploader_direct")
+    img_file = st.file_uploader("Toque para tirar foto ou pegar da galeria", type=["jpg", "png", "jpeg", "webp"], key="mob_img_uploader_direct")
+    if img_file is not None:
+        st.caption(f"📎 Arquivo pronto para envio: **{img_file.name}** ({round(img_file.size / 1024, 1)} KB)")
 
     with st.form("form_mob_cad_item", clear_on_submit=True):
         c_t1, c_t2 = st.columns(2)
@@ -466,7 +477,10 @@ with tab_mob:
             if tag_serial and description:
                 photo_url = None
                 if img_file is not None:
-                    photo_url = upload_photo_to_storage(img_file, current_project['project_code'], tag_serial, prefix="mob")
+                    photo_url, upload_err = upload_photo_to_storage(img_file, current_project['project_code'], tag_serial, prefix="mob")
+                    if upload_err:
+                        st.error(upload_err)
+                        st.stop()  # Interrompe antes do rerun para que você veja o motivo exato se houver bloqueio
 
                 payload_item = {
                     "project_id": proj_id,
@@ -570,7 +584,7 @@ with tab_desmob:
                 
                 with c_d2:
                     st.caption("🔄 **Check-in de Retorno**")
-                    desmob_cam = st.file_uploader("Foto de Retorno (Estado Físico)", type=["jpg", "png", "jpeg"], key=f"cam_desmob_{item['id']}")
+                    desmob_cam = st.file_uploader("Foto de Retorno (Estado Físico)", type=["jpg", "png", "jpeg", "webp"], key=f"cam_desmob_{item['id']}")
                     
                     with st.form(f"form_desmob_check_{item['id']}"):
                         curr_st = item.get('desmob_status', 'pending')
@@ -589,7 +603,10 @@ with tab_desmob:
                         if btn_ret:
                             desmob_url = item.get("desmob_photo_url")
                             if desmob_cam:
-                                up_url = upload_photo_to_storage(desmob_cam, current_project['project_code'], item['tag_or_serial'], prefix="desmob")
+                                up_url, up_err = upload_photo_to_storage(desmob_cam, current_project['project_code'], item['tag_or_serial'], prefix="desmob")
+                                if up_err:
+                                    st.error(up_err)
+                                    st.stop()
                                 if up_url:
                                     desmob_url = up_url
 
