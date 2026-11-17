@@ -16,8 +16,14 @@ class SupabaseConfigurationError(RuntimeError):
     pass
 
 
-def _get_cookie_manager() -> stx.CookieManager:
-    return stx.CookieManager(key="portal_cookie_manager")
+def _get_cookie_manager(suffix: str = "main") -> stx.CookieManager:
+    """
+    Garante chave única caso seja instanciado em contextos diferentes no mesmo rerun.
+    """
+    counter_key = "_cookie_mgr_calls"
+    call_idx = st.session_state.get(counter_key, 0)
+    st.session_state[counter_key] = call_idx + 1
+    return stx.CookieManager(key=f"portal_cookie_mgr_{suffix}_{call_idx}")
 
 
 def create_supabase_client() -> Client:
@@ -62,13 +68,13 @@ def _store_session(session, user, persist_cookie: bool = True) -> dict:
 
     if persist_cookie:
         try:
-            cookie_mgr = _get_cookie_manager()
+            cookie_mgr = _get_cookie_manager("write")
             expires_at = datetime.now() + timedelta(days=AUTH_COOKIE_DAYS)
             cookie_mgr.set(
                 AUTH_COOKIE_NAME,
                 json.dumps(session_data),
                 expires_at=expires_at,
-                key="set_auth_cookie",
+                key="set_auth_cookie_val",
             )
         except Exception:
             pass
@@ -104,20 +110,20 @@ def accept_email_invitation(token_hash: str) -> dict:
 
 
 def restore_session() -> dict | None:
-    cookie_mgr = _get_cookie_manager()
     saved_session = st.session_state.get(AUTH_SESSION_KEY)
 
-    # Se a sessão em memória foi limpa pelo navegador mobile, tenta recuperar do cookie
+    # Só instancia o CookieManager se a sessão ainda não estiver carregada na memória
     if not isinstance(saved_session, dict):
-        raw_cookie = cookie_mgr.get(cookie=AUTH_COOKIE_NAME)
-        if raw_cookie:
-            try:
+        try:
+            cookie_mgr = _get_cookie_manager("read")
+            raw_cookie = cookie_mgr.get(cookie=AUTH_COOKIE_NAME)
+            if raw_cookie:
                 if isinstance(raw_cookie, dict):
                     saved_session = raw_cookie
                 elif isinstance(raw_cookie, str):
                     saved_session = json.loads(raw_cookie)
-            except Exception:
-                saved_session = None
+        except Exception:
+            saved_session = None
 
     if not isinstance(saved_session, dict) or not saved_session.get("refresh_token"):
         return None
@@ -129,7 +135,6 @@ def restore_session() -> dict | None:
         )
         session = getattr(response, "session", None)
         user = _response_user(response, client)
-        # Atualiza o cookie apenas se o refresh_token rotacionou
         token_changed = (
             session is not None
             and session.refresh_token != saved_session.get("refresh_token")
@@ -181,13 +186,18 @@ def clear_session() -> None:
     st.session_state.pop(AUTH_SESSION_KEY, None)
     st.session_state.pop(AUTH_USER_KEY, None)
     try:
-        cookie_mgr = _get_cookie_manager()
-        cookie_mgr.delete(AUTH_COOKIE_NAME, key="del_auth_cookie")
+        cookie_mgr = _get_cookie_manager("delete")
+        cookie_mgr.delete(AUTH_COOKIE_NAME, key="del_auth_cookie_val")
     except Exception:
         pass
 
 
 def require_user() -> dict:
+    # Se o usuário já foi validado pelo app.py neste ciclo, retorna direto sem re-instanciar cookies
+    cached_user = st.session_state.get(AUTH_USER_KEY)
+    if isinstance(cached_user, dict) and st.session_state.get(AUTH_SESSION_KEY):
+        return cached_user
+
     user = restore_session()
     if not user:
         st.error("Entre no portal para acessar esta página.")
