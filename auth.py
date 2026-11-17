@@ -1,3 +1,6 @@
+from datetime import datetime, timedelta
+import json
+import extra_streamlit_components as stx
 import streamlit as st
 from supabase import Client, create_client
 
@@ -5,10 +8,16 @@ from supabase import Client, create_client
 AUTH_SESSION_KEY = "portal_auth_session"
 AUTH_USER_KEY = "portal_authenticated_user"
 AUTH_PENDING_ACTION_KEY = "portal_auth_pending_action"
+AUTH_COOKIE_NAME = "4sas_portal_session"
+AUTH_COOKIE_DAYS = 14
 
 
 class SupabaseConfigurationError(RuntimeError):
     pass
+
+
+def _get_cookie_manager() -> stx.CookieManager:
+    return stx.CookieManager(key="portal_cookie_manager")
 
 
 def create_supabase_client() -> Client:
@@ -41,14 +50,29 @@ def _response_user(response, client: Client):
     return user
 
 
-def _store_session(session, user) -> dict:
+def _store_session(session, user, persist_cookie: bool = True) -> dict:
     if not session:
         raise ValueError("A sessão Supabase não foi criada.")
 
-    st.session_state[AUTH_SESSION_KEY] = {
+    session_data = {
         "access_token": session.access_token,
         "refresh_token": session.refresh_token,
     }
+    st.session_state[AUTH_SESSION_KEY] = session_data
+
+    if persist_cookie:
+        try:
+            cookie_mgr = _get_cookie_manager()
+            expires_at = datetime.now() + timedelta(days=AUTH_COOKIE_DAYS)
+            cookie_mgr.set(
+                AUTH_COOKIE_NAME,
+                json.dumps(session_data),
+                expires_at=expires_at,
+                key="set_auth_cookie",
+            )
+        except Exception:
+            pass
+
     authenticated_user = {"id": str(user.id), "email": user.email or ""}
     st.session_state[AUTH_USER_KEY] = authenticated_user
     return authenticated_user
@@ -64,7 +88,7 @@ def sign_in(email: str, password: str) -> dict:
         raise ValueError("Não foi possível iniciar uma sessão para esta conta.")
 
     user = _response_user(response, client)
-    return _store_session(session, user)
+    return _store_session(session, user, persist_cookie=True)
 
 
 def accept_email_invitation(token_hash: str) -> dict:
@@ -76,12 +100,26 @@ def accept_email_invitation(token_hash: str) -> dict:
     if not session:
         raise ValueError("O convite não gerou uma sessão válida.")
     user = _response_user(response, client)
-    return _store_session(session, user)
+    return _store_session(session, user, persist_cookie=True)
 
 
 def restore_session() -> dict | None:
+    cookie_mgr = _get_cookie_manager()
     saved_session = st.session_state.get(AUTH_SESSION_KEY)
+
+    # Se a sessão em memória foi limpa pelo navegador mobile, tenta recuperar do cookie
     if not isinstance(saved_session, dict):
+        raw_cookie = cookie_mgr.get(cookie=AUTH_COOKIE_NAME)
+        if raw_cookie:
+            try:
+                if isinstance(raw_cookie, dict):
+                    saved_session = raw_cookie
+                elif isinstance(raw_cookie, str):
+                    saved_session = json.loads(raw_cookie)
+            except Exception:
+                saved_session = None
+
+    if not isinstance(saved_session, dict) or not saved_session.get("refresh_token"):
         return None
 
     try:
@@ -91,7 +129,12 @@ def restore_session() -> dict | None:
         )
         session = getattr(response, "session", None)
         user = _response_user(response, client)
-        return _store_session(session, user)
+        # Atualiza o cookie apenas se o refresh_token rotacionou
+        token_changed = (
+            session is not None
+            and session.refresh_token != saved_session.get("refresh_token")
+        )
+        return _store_session(session, user, persist_cookie=token_changed)
     except Exception:
         clear_session()
         return None
@@ -109,7 +152,11 @@ def authenticated_client() -> Client:
         )
         session = getattr(response, "session", None)
         user = _response_user(response, client)
-        _store_session(session, user)
+        token_changed = (
+            session is not None
+            and session.refresh_token != saved_session.get("refresh_token")
+        )
+        _store_session(session, user, persist_cookie=token_changed)
     except Exception as exc:
         clear_session()
         raise PermissionError("A sessão expirou. Entre novamente.") from exc
@@ -133,6 +180,11 @@ def sign_out() -> None:
 def clear_session() -> None:
     st.session_state.pop(AUTH_SESSION_KEY, None)
     st.session_state.pop(AUTH_USER_KEY, None)
+    try:
+        cookie_mgr = _get_cookie_manager()
+        cookie_mgr.delete(AUTH_COOKIE_NAME, key="del_auth_cookie")
+    except Exception:
+        pass
 
 
 def require_user() -> dict:

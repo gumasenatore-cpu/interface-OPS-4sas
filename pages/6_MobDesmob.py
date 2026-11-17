@@ -66,11 +66,11 @@ def init_supabase():
 supabase: Client = init_supabase()
 
 # ------------------------------------------------------------------------------
-# HELPER DE UPLOAD DE FOTOS DIRETO NO STORAGE (COM DIAGNÓSTICO EXPLÍCITO)
+# HELPERS DE UPLOAD E EXIBIÇÃO SEGURA DE IMAGENS
 # ------------------------------------------------------------------------------
 def upload_photo_to_storage(uploaded_file, project_code, tag_serial, prefix="mob"):
     """
-    Retorna uma tupla: (url_publica, mensagem_erro)
+    Faz upload da foto para o bucket 'mob-evidences' e retorna (url_publica, mensagem_erro).
     """
     if uploaded_file is None:
         return None, None
@@ -101,6 +101,20 @@ def upload_photo_to_storage(uploaded_file, project_code, tag_serial, prefix="mob
     except Exception as e:
         return None, f"Erro no Supabase Storage (verifique as Policies do bucket 'mob-evidences'): {e}"
 
+
+def render_safe_image(url_val, caption=""):
+    """
+    Evita crash quando campos do DataFrame vêm como NaN, None ou string vazia.
+    """
+    if isinstance(url_val, str) and url_val.strip().startswith("http"):
+        try:
+            st.image(url_val.strip(), caption=caption, use_container_width=True)
+            return True
+        except Exception:
+            st.caption(f"📷 {caption} registrada (preview indisponível)")
+            return True
+    return False
+
 # ------------------------------------------------------------------------------
 # MODAL DE EDIÇÃO DE ITEM
 # ------------------------------------------------------------------------------
@@ -118,7 +132,11 @@ def edit_item_dialog(item, df_items, current_project):
             sub_boxes_dict[f"📦 [SUB-CAIXA] {sb['tag_or_serial']} - {sb['description']}"] = sb["id"]
 
     st.write("📷 **Atualizar Foto de Mobilização**")
-    new_img_mob = st.file_uploader("Carregar/Substituir foto MOB", type=["jpg", "png", "jpeg", "webp"], key=f"edit_img_mob_{item['id']}")
+    new_img_mob = st.file_uploader(
+        "Carregar/Substituir foto MOB",
+        type=["jpg", "png", "jpeg", "webp"],
+        key=f"edit_img_mob_{item['id']}"
+    )
 
     with st.form(f"form_edit_dialog_{item['id']}"):
         new_tag = st.text_input("Tag / Identificador", value=item.get("tag_or_serial", ""))
@@ -166,6 +184,9 @@ def edit_item_dialog(item, df_items, current_project):
 
         if btn_save:
             mob_url = item.get("mob_photo_url")
+            if not isinstance(mob_url, str) or not mob_url.strip().startswith("http"):
+                mob_url = None
+
             if new_img_mob:
                 up_url, up_err = upload_photo_to_storage(new_img_mob, current_project["project_code"], new_tag, prefix="mob")
                 if up_err:
@@ -192,7 +213,7 @@ def edit_item_dialog(item, df_items, current_project):
                 st.error(f"Erro ao salvar alterações: {e}")
 
 # ------------------------------------------------------------------------------
-# GERADOR DE PDF EXECUTIVO (CÓPIA FÍSICA PARA CAIXA)
+# GERADOR DE PDF EXECUTIVO (CÓPIA FÍSICA PARA EMPLASTIFICAR)
 # ------------------------------------------------------------------------------
 def generate_packing_list_pdf(project_info, df_items):
     buffer = BytesIO()
@@ -282,17 +303,19 @@ def generate_packing_list_pdf(project_info, df_items):
         mob_img_obj = None
         desmob_img_obj = None
 
-        if row.get("mob_photo_url"):
+        mob_url = row.get("mob_photo_url")
+        if isinstance(mob_url, str) and mob_url.strip().startswith("http"):
             try:
-                r1 = requests.get(row["mob_photo_url"], timeout=5)
+                r1 = requests.get(mob_url.strip(), timeout=5)
                 if r1.status_code == 200:
                     mob_img_obj = RLImage(BytesIO(r1.content), width=90, height=65)
             except Exception:
                 pass
 
-        if row.get("desmob_photo_url"):
+        desmob_url = row.get("desmob_photo_url")
+        if isinstance(desmob_url, str) and desmob_url.strip().startswith("http"):
             try:
-                r2 = requests.get(row["desmob_photo_url"], timeout=5)
+                r2 = requests.get(desmob_url.strip(), timeout=5)
                 if r2.status_code == 200:
                     desmob_img_obj = RLImage(BytesIO(r2.content), width=90, height=65)
             except Exception:
@@ -346,6 +369,10 @@ selected_proj_label = st.sidebar.selectbox(
     options=["-- Criar Nova Campanha --"] + list(project_options.keys())
 )
 
+# Recupera e-mail do usuário autenticado via auth.py (com fallback)
+auth_user = st.session_state.get("portal_authenticated_user") or {}
+current_user_email = auth_user.get("email") or st.session_state.get("user_email", "operacoes@4sas.com.br")
+
 if selected_proj_label == "-- Criar Nova Campanha --":
     st.info("👈 Crie ou selecione uma campanha na barra lateral para iniciar o Packing List.")
     with st.sidebar.form("form_new_project"):
@@ -353,7 +380,7 @@ if selected_proj_label == "-- Criar Nova Campanha --":
         p_code = st.text_input("Código do Projeto (ex: MOB-2026-BF-01)")
         p_client = st.text_input("Cliente")
         p_vessel = st.text_input("Embarcação / Local")
-        p_user = st.text_input("Responsável Técnico", value=st.session_state.get("user_email", "operacoes@4sas.com.br"))
+        p_user = st.text_input("Responsável Técnico", value=current_user_email)
         btn_proj = st.form_submit_button("Criar Campanha")
         
         if btn_proj and p_code:
@@ -362,7 +389,7 @@ if selected_proj_label == "-- Criar Nova Campanha --":
                     "project_code": p_code.strip(),
                     "client_name": p_client.strip() if p_client else None,
                     "vessel_name": p_vessel.strip() if p_vessel else None,
-                    "responsible_user": p_user.strip() if p_user else "operacoes@4sas.com.br",
+                    "responsible_user": p_user.strip() if p_user else current_user_email,
                     "status": "in_mobilization"
                 }
                 supabase.table("mob_projects").insert(payload_p).execute()
@@ -457,7 +484,11 @@ with tab_mob:
         parent_id = all_containers[selected_c]
 
     st.write("📷 **Evidência Fotográfica de Saída (Galpão)**")
-    img_file = st.file_uploader("Toque para tirar foto ou pegar da galeria", type=["jpg", "png", "jpeg", "webp"], key="mob_img_uploader_direct")
+    img_file = st.file_uploader(
+        "Toque para tirar foto ou pegar da galeria",
+        type=["jpg", "png", "jpeg", "webp"],
+        key="mob_img_uploader_direct"
+    )
     if img_file is not None:
         st.caption(f"📎 Arquivo pronto para envio: **{img_file.name}** ({round(img_file.size / 1024, 1)} KB)")
 
@@ -480,7 +511,7 @@ with tab_mob:
                     photo_url, upload_err = upload_photo_to_storage(img_file, current_project['project_code'], tag_serial, prefix="mob")
                     if upload_err:
                         st.error(upload_err)
-                        st.stop()  # Interrompe antes do rerun para que você veja o motivo exato se houver bloqueio
+                        st.stop()
 
                 payload_item = {
                     "project_id": proj_id,
@@ -494,7 +525,7 @@ with tab_mob:
                     "mob_notes": mob_notes,
                     "mob_photo_url": photo_url,
                     "mob_dispatch_ok": True,
-                    "mob_by": st.session_state.get("user_email", "operacoes@4sas.com.br"),
+                    "mob_by": current_user_email,
                     "mob_timestamp": datetime.now().isoformat()
                 }
 
@@ -514,7 +545,7 @@ with tab_mob:
         st.info("Nenhum item cadastrado até o momento.")
     else:
         for idx, item in df_items.iterrows():
-            is_rec = item.get("mob_receipt_ok", False)
+            is_rec = bool(item.get("mob_receipt_ok", False))
             status_txt = "✅ Confirmação OK no Navio" if is_rec else "⏳ Em Trânsito / Pendente Navio"
             
             with st.expander(f"[{item['tag_or_serial']}] {item['description']} — {status_txt}"):
@@ -524,10 +555,7 @@ with tab_mob:
                     st.markdown(f"**Nível:** `{item.get('level_type')}` | **Peso:** `{item.get('weight_kg')} kg`")
                     st.markdown(f"**Obs. Despacho Galpão:** {item.get('mob_notes') or 'Nenhuma'}")
                 with col_right:
-                    photo_url = item.get("mob_photo_url")
-                    if photo_url and isinstance(photo_url, str) and photo_url.strip():
-                        st.image(photo_url, caption="Evidência Fotográfica MOB", use_container_width=True)
-                    else:
+                    if not render_safe_image(item.get("mob_photo_url"), caption="Evidência Fotográfica MOB"):
                         st.warning("Sem foto registrada na saída")
 
                 st.divider()
@@ -578,13 +606,16 @@ with tab_desmob:
                     st.markdown(f"**Tag/Serial:** `{item['tag_or_serial']}`")
                     st.markdown(f"**Peso:** {item['weight_kg']} kg | **Valor:** R$ {item['declared_value_brl']:,.2f}")
                     
-                    p_mob = item.get("mob_photo_url")
-                    if p_mob:
-                        st.image(p_mob, caption="Foto MOB (Galpão)", use_container_width=True)
+                    render_safe_image(item.get("mob_photo_url"), caption="Foto MOB (Galpão)")
+                    render_safe_image(item.get("desmob_photo_url"), caption="Foto Retorno (Desmob)")
                 
                 with c_d2:
                     st.caption("🔄 **Check-in de Retorno**")
-                    desmob_cam = st.file_uploader("Foto de Retorno (Estado Físico)", type=["jpg", "png", "jpeg", "webp"], key=f"cam_desmob_{item['id']}")
+                    desmob_cam = st.file_uploader(
+                        "Foto de Retorno (Estado Físico)",
+                        type=["jpg", "png", "jpeg", "webp"],
+                        key=f"cam_desmob_{item['id']}"
+                    )
                     
                     with st.form(f"form_desmob_check_{item['id']}"):
                         curr_st = item.get('desmob_status', 'pending')
@@ -602,6 +633,9 @@ with tab_desmob:
 
                         if btn_ret:
                             desmob_url = item.get("desmob_photo_url")
+                            if not isinstance(desmob_url, str) or not desmob_url.strip().startswith("http"):
+                                desmob_url = None
+
                             if desmob_cam:
                                 up_url, up_err = upload_photo_to_storage(desmob_cam, current_project['project_code'], item['tag_or_serial'], prefix="desmob")
                                 if up_err:
@@ -616,7 +650,7 @@ with tab_desmob:
                                 "desmob_photo_url": desmob_url,
                                 "desmob_dispatch_ok": True,
                                 "desmob_receipt_ok": True,
-                                "desmob_receipt_by": st.session_state.get("user_email", "operacoes@4sas.com.br"),
+                                "desmob_receipt_by": current_user_email,
                                 "desmob_receipt_timestamp": datetime.now().isoformat()
                             }
                             try:
