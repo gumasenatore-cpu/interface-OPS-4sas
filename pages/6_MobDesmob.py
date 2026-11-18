@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
+import zipfile
 import requests
 from supabase import create_client, Client
 
@@ -202,6 +203,11 @@ def format_tag_display(tag_val):
     if not tag_val or str(tag_val).strip() in ("", "None", "nan", "S/TAG"):
         return "S/TAG"
     return str(tag_val).strip()
+
+
+def sanitize_filename_part(val: str) -> str:
+    cleaned = "".join([c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(val)]).strip("_")
+    return cleaned or "CAIXA"
 
 
 def build_hierarchical_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
@@ -434,7 +440,7 @@ def edit_item_dialog(item, df_items, current_project):
                 st.error(f"Erro ao salvar alterações: {e}")
 
 # ------------------------------------------------------------------------------
-# GERADOR DE PDF EXECUTIVO (CÓPIA FÍSICA PARA EMPLASTIFICAR - SEM EMOJIS)
+# GERADOR DE PDF EXECUTIVO E PACOTE ZIP (CÓPIA FÍSICA PARA EMPLASTIFICAR)
 # ------------------------------------------------------------------------------
 def generate_packing_list_pdf(project_info, df_hier, scope_title="MANIFESTO COMPLETO DE CARGA"):
     buffer = BytesIO()
@@ -621,6 +627,54 @@ def generate_packing_list_pdf(project_info, df_hier, scope_title="MANIFESTO COMP
     buffer.seek(0)
     return buffer.getvalue()
 
+
+def generate_all_boxes_zip(project_info, df_hier, progress_callback=None) -> tuple[bytes, int]:
+    """
+    Gera um arquivo .ZIP contendo:
+    - 00_MANIFESTO_GERAL_<PROJETO>.pdf
+    - Um PDF individual numerado para cada Caixa Pai e Sub-caixa da campanha.
+    """
+    zip_buffer = BytesIO()
+    proj_slug = sanitize_filename_part(project_info.get("project_code", "CAMPANHA"))
+    boxes_df = df_hier[df_hier["level_type"].isin(["parent_box", "sub_box"])]
+    total_steps = 1 + len(boxes_df)
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1. Manifesto Geral
+        if progress_callback:
+            progress_callback(1 / total_steps, "Gerando Manifesto Geral da Campanha...")
+        full_pdf = generate_packing_list_pdf(project_info, df_hier, scope_title="MANIFESTO DE CARGA / PACKING LIST")
+        zf.writestr(f"00_MANIFESTO_GERAL_{proj_slug}.pdf", full_pdf)
+
+        # 2. Etiqueta interna individual para cada Caixa Pai e Sub-caixa
+        used_names = set()
+        for idx_b, (_, bx) in enumerate(boxes_df.iterrows(), start=1):
+            b_tag = format_tag_display(bx.get("tag_or_serial"))
+            b_desc = str(bx.get("description", ""))
+            if progress_callback:
+                progress_callback((idx_b + 1) / total_steps, f"Gerando PDF da caixa {b_tag}...")
+
+            df_sub = filter_subtree(df_hier, bx["id"])
+            box_pdf = generate_packing_list_pdf(
+                project_info,
+                df_sub,
+                scope_title=f"CONTEUDO DA CAIXA: {b_tag} ({b_desc})"
+            )
+
+            tag_slug = sanitize_filename_part(b_tag)
+            base_name = f"{idx_b:02d}_{tag_slug}_{proj_slug}"
+            final_name = f"{base_name}.pdf"
+            counter = 2
+            while final_name in used_names:
+                final_name = f"{base_name}_{counter}.pdf"
+                counter += 1
+            used_names.add(final_name)
+
+            zf.writestr(final_name, box_pdf)
+
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue(), len(boxes_df)
+
 # ------------------------------------------------------------------------------
 # INTERFACE PRINCIPAL
 # ------------------------------------------------------------------------------
@@ -762,7 +816,6 @@ with tab_mob:
         )
         quick_parent_id = all_containers[target_box_label]
 
-        # Contador ao vivo de itens já dentro da caixa selecionada
         if not df_items.empty:
             if quick_parent_id is None:
                 count_in_box = len(df_items[(df_items["level_type"] == "item") & (df_items["parent_id"].isna())])
@@ -770,7 +823,6 @@ with tab_mob:
                 count_in_box = len(df_items[df_items["parent_id"].astype(str) == str(quick_parent_id)])
             st.caption(f"📊 Já registrados neste destino: **{count_in_box} itens**")
 
-        # Inicializa estado do cartão rápido (com contador de reset limpo)
         reset_counter_key = f"quick_reset_cnt_{proj_id}"
         if reset_counter_key not in st.session_state:
             st.session_state[reset_counter_key] = 0
@@ -782,7 +834,6 @@ with tab_mob:
 
         st.markdown("<div class='quick-card'>", unsafe_allow_html=True)
 
-        # 1) Foto da Câmera / Galeria com validação de integridade
         q_photo = st.file_uploader(
             "📷 1. Foto do Item (Câmera ou Galeria)",
             type=["jpg", "png", "jpeg", "webp"],
@@ -795,14 +846,12 @@ with tab_mob:
             else:
                 st.warning(photo_status_msg)
 
-        # 2) Nome do Item
         q_desc = st.text_input(
             "🏷️ 2. Nome / Descrição do Item *",
             placeholder="ex: Cabo Sensys LAN, Magnetômetro, Adaptador...",
             key=f"quick_desc_{proj_id}_{rc}"
         )
 
-        # 3) Quantidade com botões grandes + e -
         st.markdown("**🔢 3. Quantidade:**")
         c_q1, c_q2, c_q3 = st.columns([1, 1, 1])
         with c_q1:
@@ -817,7 +866,6 @@ with tab_mob:
                 st.session_state[qty_state_key] += 1
                 st.rerun()
 
-        # Campos avançados opcionais recolhidos para não poluir a tela do celular
         with st.expander("⚙️ Opcionais (Tag / Serial, Peso, Valor, Observação)"):
             q_tag = st.text_input("Tag / Número de Série (deixe vazio para S/TAG)", key=f"quick_tag_{proj_id}_{rc}")
             c_opt1, c_opt2 = st.columns(2)
@@ -829,7 +877,6 @@ with tab_mob:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Botão principal de salvamento com trava caso a foto ainda esteja transferindo
         save_disabled = (q_photo is not None and not photo_ready)
         if st.button(
             "✅ Salvar e Próximo Item",
@@ -874,7 +921,6 @@ with tab_mob:
                     }
                     try:
                         supabase.table("mob_packing_list_items").insert(payload_item).execute()
-                        # Incrementa o contador de reset para limpar os inputs mantendo a caixa selecionada
                         st.session_state[reset_counter_key] += 1
                         foto_txt = " (com foto)" if photo_url else " (sem foto)"
                         st.session_state["mob_last_saved_msg"] = f"✅ Salvo: {qty_to_save}x {q_desc.strip()}{foto_txt}. Pronto para o próximo!"
@@ -1212,11 +1258,45 @@ with tab_desmob:
                                 st.error(f"Erro ao atualizar: {e}")
 
 # ------------------------------------------------------------------------------
-# TAB 3: RELATÓRIOS & CSV/PDF EXECUTIVO
+# TAB 3: RELATÓRIOS, PACOTE ZIP & CSV/PDF EXECUTIVO
 # ------------------------------------------------------------------------------
 with tab_report:
     st.subheader("📊 Relatórios e Documentação Física da Caixa")
     if not df_items.empty:
+        # Bloco 1: Pacote ZIP Completo (Manifesto Geral + Etiqueta PDF de cada Caixa)
+        st.markdown("##### 🗜️ Pacote Completo para Impressão e Emplastificação (.ZIP)")
+        st.caption("Gera de uma só vez o Manifesto Geral da campanha e um PDF individual para cada Caixa Pai e Sub-caixa.")
+
+        zip_cache_key = f"zip_bundle_{proj_id}_{len(df_items)}"
+        col_zip1, col_zip2 = st.columns([2, 2])
+        with col_zip1:
+            if st.button("⚙️ Gerar Pacote ZIP com Todos os PDFs", type="primary", key="btn_build_zip_all"):
+                prog_zip = st.progress(0, text="Preparando documentos PDF...")
+                try:
+                    zip_bytes, box_count = generate_all_boxes_zip(
+                        current_project,
+                        df_items,
+                        progress_callback=lambda p, txt: prog_zip.progress(min(p, 1.0), text=txt)
+                    )
+                    st.session_state[zip_cache_key] = (zip_bytes, box_count)
+                    prog_zip.empty()
+                except Exception as e_zip:
+                    st.error(f"Erro ao gerar pacote ZIP: {e_zip}")
+
+        with col_zip2:
+            if zip_cache_key in st.session_state:
+                z_bytes, b_cnt = st.session_state[zip_cache_key]
+                st.download_button(
+                    label=f"📥 Baixar ZIP ({1 + b_cnt} PDFs prontos)",
+                    data=z_bytes,
+                    file_name=f"packing_lists_{sanitize_filename_part(current_project['project_code'])}.zip",
+                    mime="application/zip",
+                    key="btn_download_zip_ready"
+                )
+
+        st.divider()
+
+        # Bloco 2: PDF Individual ou Manifesto Único + CSV
         pdf_scope_opts = {"📋 Campanha Completa (Todos os Volumes e Itens)": (None, "MANIFESTO DE CARGA / PACKING LIST")}
         for _, bx in df_items[df_items["level_type"].isin(["parent_box", "sub_box"])].iterrows():
             b_tag = format_tag_display(bx["tag_or_serial"])
@@ -1224,7 +1304,7 @@ with tab_report:
             pdf_scope_opts[lbl] = (bx["id"], f"CONTEUDO DA CAIXA: {b_tag} ({bx['description']})")
 
         selected_pdf_scope = st.selectbox(
-            "Selecione o Escopo do Documento para Impressão:",
+            "Ou selecione um PDF específico para download individual:",
             list(pdf_scope_opts.keys()),
             key="pdf_scope_selector"
         )
@@ -1234,17 +1314,16 @@ with tab_report:
         col_pdf, col_csv = st.columns(2)
 
         with col_pdf:
-            st.markdown("##### 📄 PDF Executivo Emplastificável")
+            st.markdown("##### 📄 PDF Individual Selecionado")
             st.caption("Agrupado por caixa, com quantidades e fotos para fixar na tampa.")
             try:
                 pdf_bytes = generate_packing_list_pdf(current_project, df_pdf_export, scope_title=scope_pdf_title)
-                suffix_file = f"_{format_tag_display(df_pdf_export.iloc[0]['tag_or_serial'])}" if scope_box_id and not df_pdf_export.empty else ""
+                suffix_file = f"_{sanitize_filename_part(df_pdf_export.iloc[0]['tag_or_serial'])}" if scope_box_id and not df_pdf_export.empty else ""
                 st.download_button(
-                    label="📄 Baixar Packing List Executivo (PDF)",
+                    label="📄 Baixar PDF Selecionado",
                     data=pdf_bytes,
-                    file_name=f"packing_list_{current_project['project_code']}{suffix_file}.pdf",
-                    mime="application/pdf",
-                    type="primary"
+                    file_name=f"packing_list_{sanitize_filename_part(current_project['project_code'])}{suffix_file}.pdf",
+                    mime="application/pdf"
                 )
             except Exception as e_pdf:
                 st.error(f"Erro ao gerar PDF: {e_pdf}")
@@ -1256,7 +1335,7 @@ with tab_report:
             st.download_button(
                 label="💾 Baixar Dados (CSV / Excel)",
                 data=csv_bytes,
-                file_name=f"packing_list_{current_project['project_code']}.csv",
+                file_name=f"packing_list_{sanitize_filename_part(current_project['project_code'])}.csv",
                 mime="text/csv"
             )
 
