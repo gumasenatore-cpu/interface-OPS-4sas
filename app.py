@@ -6,7 +6,6 @@ from auth import (
     restore_session,
 )
 
-
 st.set_page_config(
     page_title="OPS - 4SAS | Portal",
     page_icon="assets/logo_4sas.png",
@@ -53,7 +52,7 @@ if user:
                 font-size: 0.875rem;
             }
 
-            h1, h2, h3 {
+            h1, h2, h3, h4 {
                 font-family: var(--portal-font) !important;
                 letter-spacing: 0;
             }
@@ -61,6 +60,7 @@ if user:
             h1 { font-size: 1.75rem !important; }
             h2 { font-size: 1.35rem !important; }
             h3 { font-size: 1.1rem !important; }
+            h4 { font-size: 1.05rem !important; margin-top: 0.2rem; margin-bottom: 0.4rem; }
 
             [data-testid="stCaptionContainer"] {
                 font-family: var(--portal-font) !important;
@@ -70,6 +70,7 @@ if user:
         """,
         unsafe_allow_html=True,
     )
+
     if st.session_state.get(AUTH_PENDING_ACTION_KEY) == "invite":
         pages = [
             st.Page(
@@ -79,37 +80,69 @@ if user:
                 default=True,
             )
         ]
+        nav_position = "hidden"
     else:
-        pages = {
-            "Portal": [
-                st.Page("portal_home.py", title="Início", icon=":material/home:", default=True)
-            ],
-            "Operações": [
-                st.Page("pages/1_Boletim.py", title="Boletim", icon=":material/monitoring:"),
-                st.Page("pages/2_APR.py", title="APR", icon=":material/health_and_safety:"),
-                st.Page(
-                    "pages/3_Fornecedores.py",
-                    title="Fornecedores",
-                    icon=":material/local_shipping:",
-                ),
-                st.Page(
-                    "pages/4_Planejador_Linhas.py",
-                    title="Planejador de Linhas",
-                    icon=":material/map:",
-                ),
-                st.Page(
-                    "pages/5_Inventario.py",
-                    title="Inventário & Manutenção",
-                    icon=":material/inventory_2:",
-                ),
-                st.Page(
-                    "pages/6_MobDesmob.py",
-                    title="Checklist Mob/Desmob",
-                    icon=":material/fact_check:",
-                ),
-            ],
+        pg_inicio = st.Page(
+            "pages/inicio.py",
+            title="Início",
+            icon=":material/home:",
+            default=True,
+        )
+
+        # Grupo: Operação & Planejamento
+        pg_boletim = st.Page(
+            "pages/1_Boletim.py",
+            title="1 - Boletim",
+            icon=":material/monitoring:",
+        )
+        pg_linhas = st.Page(
+            "pages/4_Planejador_Linhas.py",
+            title="4 - Planejador de Linhas",
+            icon=":material/map:",
+        )
+
+        # Grupo: Segurança & Campo
+        pg_apr = st.Page(
+            "pages/2_APR.py",
+            title="2 - APR",
+            icon=":material/health_and_safety:",
+        )
+        pg_checklist = st.Page(
+            "pages/6_MobDesmob.py",
+            title="6 - Checklist Mob/Demob",
+            icon=":material/fact_check:",
+        )
+
+        # Grupo: Recursos & Apoio
+        pg_fornecedores = st.Page(
+            "pages/3_Fornecedores.py",
+            title="3 - Fornecedores",
+            icon=":material/local_shipping:",
+        )
+        pg_inventario = st.Page(
+            "pages/5_Inventario.py",
+            title="5 - Inventário & Manutenção",
+            icon=":material/inventory_2:",
+        )
+
+        st.session_state["portal_pages"] = {
+            "boletim": pg_boletim,
+            "apr": pg_apr,
+            "fornecedores": pg_fornecedores,
+            "linhas": pg_linhas,
+            "inventario": pg_inventario,
+            "checklist": pg_checklist,
         }
+
+        pages = {
+            "": [pg_inicio],
+            "Operação & Planejamento": [pg_boletim, pg_linhas],
+            "Segurança & Campo": [pg_apr, pg_checklist],
+            "Recursos & Apoio": [pg_fornecedores, pg_inventario],
+        }
+        nav_position = "top"
 else:
     pages = [st.Page("login.py", title="Entrar", icon=":material/login:", default=True)]
+    nav_position = "hidden"
 
-st.navigation(pages, position="sidebar").run()
+st.navigation(pages, position=nav_position).run()

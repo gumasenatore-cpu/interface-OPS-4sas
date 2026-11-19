@@ -8,6 +8,7 @@ from supabase import Client, create_client
 AUTH_SESSION_KEY = "portal_auth_session"
 AUTH_USER_KEY = "portal_authenticated_user"
 AUTH_PENDING_ACTION_KEY = "portal_auth_pending_action"
+AUTH_COOKIE_SYNC_KEY = "portal_cookie_pending_sync"
 AUTH_COOKIE_NAME = "4sas_portal_session"
 AUTH_COOKIE_DAYS = 14
 
@@ -17,13 +18,8 @@ class SupabaseConfigurationError(RuntimeError):
 
 
 def _get_cookie_manager(suffix: str = "main") -> stx.CookieManager:
-    """
-    Garante chave única caso seja instanciado em contextos diferentes no mesmo rerun.
-    """
-    counter_key = "_cookie_mgr_calls"
-    call_idx = st.session_state.get(counter_key, 0)
-    st.session_state[counter_key] = call_idx + 1
-    return stx.CookieManager(key=f"portal_cookie_mgr_{suffix}_{call_idx}")
+    """Instancia o gerenciador de cookies com chave determinística por contexto."""
+    return stx.CookieManager(key=f"portal_cookie_mgr_{suffix}")
 
 
 def create_supabase_client() -> Client:
@@ -35,12 +31,12 @@ def create_supabase_client() -> Client:
             "Configure SUPABASE_URL e SUPABASE_KEY nos secrets do Streamlit."
         ) from exc
 
-    if not url or not key:
+    if not isinstance(url, str) or not isinstance(key, str) or not url.strip() or not key.strip():
         raise SupabaseConfigurationError(
-            "Configure SUPABASE_URL e SUPABASE_KEY nos secrets do Streamlit."
+            "Credenciais SUPABASE_URL e SUPABASE_KEY inválidas nos secrets."
         )
 
-    return create_client(url, key)
+    return create_client(url.strip(), key.strip())
 
 
 def _response_user(response, client: Client):
@@ -52,11 +48,11 @@ def _response_user(response, client: Client):
         user_response = client.auth.get_user()
         user = getattr(user_response, "user", user_response)
     if user is None:
-        raise ValueError("O Supabase não retornou um usuário para esta sessão.")
+        raise ValueError("O Supabase não retornou um usuário válido para esta sessão.")
     return user
 
 
-def _store_session(session, user, persist_cookie: bool = True) -> dict:
+def _store_session(session, user, defer_cookie: bool = True) -> dict:
     if not session:
         raise ValueError("A sessão Supabase não foi criada.")
 
@@ -66,22 +62,41 @@ def _store_session(session, user, persist_cookie: bool = True) -> dict:
     }
     st.session_state[AUTH_SESSION_KEY] = session_data
 
-    if persist_cookie:
-        try:
-            cookie_mgr = _get_cookie_manager("write")
-            expires_at = datetime.now() + timedelta(days=AUTH_COOKIE_DAYS)
-            cookie_mgr.set(
-                AUTH_COOKIE_NAME,
-                json.dumps(session_data),
-                expires_at=expires_at,
-                key="set_auth_cookie_val",
-            )
-        except Exception:
-            pass
-
     authenticated_user = {"id": str(user.id), "email": user.email or ""}
     st.session_state[AUTH_USER_KEY] = authenticated_user
+
+    if defer_cookie:
+        # Adia a escrita do cookie para o próximo render estável (evita aborto por st.rerun)
+        st.session_state[AUTH_COOKIE_SYNC_KEY] = True
+    else:
+        sync_pending_cookie()
+
     return authenticated_user
+
+
+def sync_pending_cookie() -> None:
+    """Sincroniza o cookie no navegador após a transição de tela estabilizar."""
+    if not st.session_state.get(AUTH_COOKIE_SYNC_KEY):
+        return
+
+    session_data = st.session_state.get(AUTH_SESSION_KEY)
+    if not isinstance(session_data, dict):
+        st.session_state.pop(AUTH_COOKIE_SYNC_KEY, None)
+        return
+
+    try:
+        cookie_mgr = _get_cookie_manager("sync")
+        expires_at = datetime.now() + timedelta(days=AUTH_COOKIE_DAYS)
+        cookie_mgr.set(
+            AUTH_COOKIE_NAME,
+            json.dumps(session_data),
+            expires_at=expires_at,
+            key="set_auth_cookie_val",
+        )
+        st.session_state.pop(AUTH_COOKIE_SYNC_KEY, None)
+    except Exception:
+        # Mantém a sessão ativa em memória mesmo se o navegador bloquear cookies de terceiros
+        st.session_state.pop(AUTH_COOKIE_SYNC_KEY, None)
 
 
 def sign_in(email: str, password: str) -> dict:
@@ -94,7 +109,7 @@ def sign_in(email: str, password: str) -> dict:
         raise ValueError("Não foi possível iniciar uma sessão para esta conta.")
 
     user = _response_user(response, client)
-    return _store_session(session, user, persist_cookie=True)
+    return _store_session(session, user, defer_cookie=True)
 
 
 def accept_email_invitation(token_hash: str) -> dict:
@@ -106,28 +121,34 @@ def accept_email_invitation(token_hash: str) -> dict:
     if not session:
         raise ValueError("O convite não gerou uma sessão válida.")
     user = _response_user(response, client)
-    return _store_session(session, user, persist_cookie=True)
+    return _store_session(session, user, defer_cookie=True)
 
 
 def restore_session() -> dict | None:
     saved_session = st.session_state.get(AUTH_SESSION_KEY)
+    cached_user = st.session_state.get(AUTH_USER_KEY)
 
-    # Só instancia o CookieManager se a sessão ainda não estiver carregada na memória
+    # 1. Sessão já ativa na memória do Streamlit
+    if isinstance(saved_session, dict) and isinstance(cached_user, dict):
+        sync_pending_cookie()
+        return cached_user
+
+    # 2. Tentativa de recuperação via cookie persistido no navegador
     if not isinstance(saved_session, dict):
         try:
             cookie_mgr = _get_cookie_manager("read")
             raw_cookie = cookie_mgr.get(cookie=AUTH_COOKIE_NAME)
-            if raw_cookie:
-                if isinstance(raw_cookie, dict):
-                    saved_session = raw_cookie
-                elif isinstance(raw_cookie, str):
-                    saved_session = json.loads(raw_cookie)
+            if isinstance(raw_cookie, dict):
+                saved_session = raw_cookie
+            elif isinstance(raw_cookie, str) and raw_cookie.strip():
+                saved_session = json.loads(raw_cookie)
         except Exception:
             saved_session = None
 
     if not isinstance(saved_session, dict) or not saved_session.get("refresh_token"):
         return None
 
+    # 3. Revalidação do token junto ao Supabase Auth
     try:
         client = create_supabase_client()
         response = client.auth.set_session(
@@ -139,7 +160,7 @@ def restore_session() -> dict | None:
             session is not None
             and session.refresh_token != saved_session.get("refresh_token")
         )
-        return _store_session(session, user, persist_cookie=token_changed)
+        return _store_session(session, user, defer_cookie=token_changed)
     except Exception:
         clear_session()
         return None
@@ -161,7 +182,7 @@ def authenticated_client() -> Client:
             session is not None
             and session.refresh_token != saved_session.get("refresh_token")
         )
-        _store_session(session, user, persist_cookie=token_changed)
+        _store_session(session, user, defer_cookie=token_changed)
     except Exception as exc:
         clear_session()
         raise PermissionError("A sessão expirou. Entre novamente.") from exc
@@ -185,6 +206,7 @@ def sign_out() -> None:
 def clear_session() -> None:
     st.session_state.pop(AUTH_SESSION_KEY, None)
     st.session_state.pop(AUTH_USER_KEY, None)
+    st.session_state.pop(AUTH_COOKIE_SYNC_KEY, None)
     try:
         cookie_mgr = _get_cookie_manager("delete")
         cookie_mgr.delete(AUTH_COOKIE_NAME, key="del_auth_cookie_val")
@@ -193,7 +215,6 @@ def clear_session() -> None:
 
 
 def require_user() -> dict:
-    # Se o usuário já foi validado pelo app.py neste ciclo, retorna direto sem re-instanciar cookies
     cached_user = st.session_state.get(AUTH_USER_KEY)
     if isinstance(cached_user, dict) and st.session_state.get(AUTH_SESSION_KEY):
         return cached_user

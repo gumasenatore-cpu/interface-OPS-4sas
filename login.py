@@ -119,11 +119,6 @@ st.markdown(
             box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
         }
 
-        .st-key-login-panel [data-testid="stForm"] {
-            padding: 0;
-            border: 0;
-        }
-
         .st-key-login-panel label {
             color: #eeeeee;
         }
@@ -142,7 +137,7 @@ st.markdown(
             color: #dddddd;
         }
 
-        .st-key-login-panel [data-testid="stFormSubmitButton"] button {
+        .st-key-login-panel [data-testid="stButton"] button {
             min-height: 2.8rem;
             background: #f32735;
             border-color: #f32735;
@@ -181,33 +176,43 @@ st.markdown(
 
 with st.container(key="login-shell"):
     with st.container(key="login-brand"):
-        wordmark_data = base64.b64encode(
-            Path("assets/logo_4sas_wordmark.png").read_bytes()
-        ).decode("ascii")
-        st.markdown(
-            f'<div class="login-wordmark"><img src="data:image/png;base64,{wordmark_data}" alt="4SAS"></div>'
-            '<h1 class="login-title">OPERAÇÕES</h1>',
-            unsafe_allow_html=True,
-        )
+        wordmark_path = Path("assets/logo_4sas_wordmark.png")
+        if wordmark_path.exists():
+            wordmark_data = base64.b64encode(wordmark_path.read_bytes()).decode("ascii")
+            st.markdown(
+                f'<div class="login-wordmark"><img src="data:image/png;base64,{wordmark_data}" alt="4SAS"></div>'
+                '<h1 class="login-title">OPERAÇÕES</h1>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown('<h1 class="login-title">4SAS | OPERAÇÕES</h1>', unsafe_allow_html=True)
 
     with st.container(key="login-panel", border=True):
-        with st.form("portal_login"):
-            email = st.text_input("E-mail", autocomplete="email")
-            password = st.text_input(
-                "Senha", type="password", autocomplete="current-password"
-            )
-            submitted = st.form_submit_button(
-                "Entrar", type="primary", use_container_width=True
-            )
+        email = st.text_input("E-mail", autocomplete="email", key="login_email")
+        password = st.text_input(
+            "Senha",
+            type="password",
+            autocomplete="current-password",
+            key="login_password",
+        )
+        submitted = st.button(
+            "Entrar",
+            type="primary",
+            use_container_width=True,
+            key="login_submit_btn",
+        )
 
         if submitted:
-            try:
-                sign_in(email, password)
-                st.rerun()
-            except SupabaseConfigurationError as exc:
-                st.error(str(exc))
-            except Exception as exc:
-                st.error(login_error_message(exc))
+            if not email or not password:
+                st.warning("Preencha seu e-mail e senha.")
+            else:
+                try:
+                    sign_in(email, password)
+                    st.rerun()
+                except SupabaseConfigurationError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(login_error_message(exc))
 
     st.markdown(
         '<p class="login-help">Problemas de acesso? Fale com o administrador do portal.</p>',

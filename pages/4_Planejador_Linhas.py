@@ -13,7 +13,7 @@ from utils.geo_engine import (
 )
 from utils.exports import generate_hypack_lnw, generate_qinsy_txt, generate_csv
 
-st.set_page_config(page_title="Planejador de Linhas | 4SAS", layout="wide")
+#st.set_page_config(page_title="Planejador de Linhas | 4SAS", layout="wide")
 
 st.title("Planejador de Linhas de Levantamento")
 st.caption("Módulo Geoespacial para Batimetria (NORMAM-501 / IHO) e Geofísica Rasa (EdgeTech 2000-DSS SSS/SBP)")
