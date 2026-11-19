@@ -27,7 +27,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
     #page_icon="📋",
     #layout="wide",
     #initial_sidebar_state="collapsed"
-)
+#)
 
 st.markdown("""
     <style>
